@@ -310,8 +310,13 @@ class Controller(ABC):
         # ── 5. Насыщение ───────────────────────────────────────────────
         F_clipped = float(np.clip(F_raw, -self._max_force, self._max_force))
 
+        # ── 5.1 Сглаживание (инерция двигателя) ────────────────────────
+        # EMA-фильтр для сглаживания скачков силы
+        alpha_force = 0.5  # коэффициент сглаживания (можно вынести в конфиг)
+        F_smoothed = (1.0 - alpha_force) * self._last_control_action + alpha_force * F_clipped
+
         # ── 6. Сохранение и возврат ────────────────────────────────────
-        self._last_control_action = F_clipped
+        self._last_control_action = F_smoothed
         return self._last_control_action
 
     # ── Абстрактный метод (закон управления) ──────────────────────────────
