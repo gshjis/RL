@@ -41,7 +41,7 @@ PLANT_CONFIG = PlantConfig(
     b_2=0.00,
     single_pendulum_mode=True,   # двухзвенный режим
     backslash_mode=False,        # люфт выключен
-    init_q=(-1, np.pi, 0.0),   # маятник вверху
+    init_q=(-2, np.pi, 0.0),   # маятник вверху
     init_dq=(0.0, 0.0, 0.0),
 )
 
@@ -67,14 +67,14 @@ CONTROLLER_CONFIG = ControllerConfig(
     has_velocity_sensors=False,  
     differentiator_cutoff_hz=20.0, # фильтрация дифференциатора
     filter_cutoff_hz=10.0,         # фильтрация сигнала
-    gains=[110.0, 40.0, 20.0, -1.0, -1]   # [Kp, Ki, Kd, Kx, Kdx]
+    gains=[107.5716, 41.8424, 23.9279, -16.8122, -13.21]   # [Kp, Ki, Kd, Kx, Kdx]
 )
 
 # Инициализация контроллера
 controller = PIDController(CONTROLLER_CONFIG)
 # Добавляем инерционность двигателя (tau = 0.05 с)
 controller.set_motor_inertia(time_constant=0.05)
-controller.train(PLANT_CONFIG, SENSOR_CONFIG, NoiseForce(value=0.05), target_state=State(0, np.pi, 0))
+# controller.train(PLANT_CONFIG, SENSOR_CONFIG, NoiseForce(value=0.05), target_state=State(0, np.pi, 0))
 # Инициализация объекта управления
 plant = ObjectOfControl(PLANT_CONFIG)
 

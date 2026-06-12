@@ -82,43 +82,61 @@ class PIDController(Controller):
         target_state: State,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
     ) -> dict[str, Any]:
-        _iteration = [0]
+        # Более исследовательский метод оптимизации (стохастический поиск).
+        # Реализуем простую эволюционную стратегию: на каждой итерации
+        # генерируем партию кандидатов вокруг текущих параметров, оцениваем
+        # их и выбираем лучший; шаг (sigma) уменьшаем по расписанию.
+        rng = np.random.default_rng()
+        current = self.gains.copy()
+        best_J = float("inf")
+        best_x = current.copy()
 
-        def objective(gains_vector: NDArray[np.float64]) -> float:
-            self.gains = gains_vector
-            J, time = self._run_episode(
-                plant_config, sensor_config, noise, alpha, max_time, target_state, terminate_condition
-            )
-            # Явное логгирование в консоль
+        max_iters = (method_options or {}).get("maxiter", 200)
+        pop_size = (method_options or {}).get("pop_size", 16)
+        sigma0 = (method_options or {}).get("sigma", 1.0)
+        sigma = float(sigma0)
+
+        for it in range(int(max_iters)):
+            # уменьшение дисперсии по экспоненциальной схеме
+            sigma = sigma0 * (0.99 ** it)
+
+            # сгенерировать популяцию кандидатов
+            candidates = current + rng.normal(scale=sigma, size=(pop_size, current.size))
+
+            scores = np.zeros(pop_size, dtype=np.float64)
+            times = np.zeros(pop_size, dtype=np.float64)
+            for i in range(pop_size):
+                self.gains = candidates[i]
+                J, t = self._run_episode(
+                    plant_config, sensor_config, noise, alpha, max_time, target_state, terminate_condition
+                )
+                scores[i] = J
+                times[i] = t
+
+            # Найти лучшего в популяции
+            idx = int(np.argmin(scores))
+            if scores[idx] < best_J:
+                best_J = float(scores[idx])
+                best_x = candidates[idx].copy()
+
+            # Логирование прогресса
+            avg_J = float(np.mean(scores))
             print(
-                f"[iter {_iteration[0]:>3d}]  "
-                f"J={J:>10.4f}  "
-                f"Kp={gains_vector[0]:>8.4f}  "
-                f"Ki={gains_vector[1]:>8.4f}  "
-                f"Kd={gains_vector[2]:>8.4f}  "
-                f"Kx={gains_vector[3]:>8.4f}  "
-                f"Kdx={gains_vector[4]:>8.4f}  "
-                f"t={time:>8.4f}"
+                f"[it {it:04d}] best={best_J:8.4f} avg={avg_J:8.4f} "
+                f"Kp={best_x[0]:.4f} Ki={best_x[1]:.4f} Kd={best_x[2]:.4f} "
+                f"Kx={best_x[3]:.4f} Kdx={best_x[4]:.4f} sigma={sigma:.4f}"
             )
-            _iteration[0] += 1
-            return J
 
-        x0 = self.gains
-        options = method_options or {"xatol": 1e-2, "maxiter": 200}
+            # Сдвинуть центр к лучшему кандидату
+            current = best_x.copy()
 
-        result = minimize(
-            objective,
-            x0,
-            method="Nelder-Mead",
-            options=options,
-        )
+            # простое условие останова — если улучшение мало
+            if it > 5 and abs(avg_J - best_J) < 1e-6:
+                break
 
-        self.gains = result.x
-        return {
-            "x": result.x,
-            "fun": result.fun,
-            "success": result.success,
-        }
+        # Применить лучшие найденные параметры
+        self.gains = best_x
+        return {"x": best_x, "fun": best_J, "success": True}
 
     # ── Внутренний метод: прогон эпизода ──────────────────────────────────
 

@@ -118,6 +118,23 @@ class PendulumViewer:
 
     def use(self) -> None:
         """Запустить главный цикл визуализации (блокирующий)."""
+        # Перед стартом спросим в консоли, нужна ли запись
+        try:
+            ans = input("Record simulation to video? (y/N): ").strip().lower()
+        except Exception:
+            ans = "n"
+        if ans == "y":
+            # включить запись и создать папку
+            import tempfile
+
+            d = tempfile.mkdtemp(prefix="pendulum_rec_", dir=self._record_dir)
+            self._record_dir = d
+            self._frame_index = 0
+            self._recording = True
+            self._need_compile = True
+        else:
+            self._recording = False
+
         running = True
         manual_force = 0.0
         force_per_frame = 20.0
@@ -258,6 +275,35 @@ class PendulumViewer:
                     # сброс состояния
                     self._need_compile = False
                     self._record_dir = None
+
+        # Перед выходом: если были накоплены кадры, спросить сохранить ли видео
+        if self._record_dir is not None:
+            # подсчитать кадры
+            try:
+                import glob
+
+                frames = sorted(glob.glob(os.path.join(self._record_dir, "frame_*.png")))
+            except Exception:
+                frames = []
+
+            if frames:
+                try:
+                    ans = input(f"Save recorded video from {len(frames)} frames? (Y/n): ").strip().lower()
+                except Exception:
+                    ans = "y"
+
+                if ans == "" or ans == "y":
+                    # скомпилировать и затем удалить кадры, оставив только ролик
+                    try:
+                        self._compile_video(self._record_dir, FPS)
+                        # удалить png-файлы
+                        for p in frames:
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
 
         pygame.quit()
         sys.exit(0)
