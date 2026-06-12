@@ -8,6 +8,7 @@ from .datatypes import (
     State,
     StateDot,
 )
+from .engine import MotorInertia
 from .pendulum import BacklashModel, ObjectOfControl
 from .sensor import NoiseGenerator, SensorBlock
 
@@ -24,6 +25,8 @@ __all__ = [
     "PlantConfig",
     "SensorConfig",
     "ControllerConfig",
+    # engine
+    "MotorInertia",
     # pendulum
     "BacklashModel",
     "ObjectOfControl",

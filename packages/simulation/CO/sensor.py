@@ -1,7 +1,7 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from .datatypes import SensorConfig
+from .datatypes import MeasuredState, SensorConfig
 
 
 class NoiseGenerator:
@@ -129,7 +129,7 @@ class SensorBlock:
 
     def get_telemetry(
         self, raw_q: NDArray[np.float64], raw_dq: NDArray[np.float64]
-    ) -> NDArray[np.float64]:
+    ) -> MeasuredState:
         """
         Преобразовать чистые координаты ОУ в зашумлённый квантованный
         вектор телеметрии.
@@ -152,9 +152,8 @@ class SensorBlock:
 
         Returns
         -------
-        NDArray[np.float64]
-            Вектор измеренного состояния
-            ``[x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂]``.
+        MeasuredState
+            Вектор измеренного состояния.
         """
         q = np.asarray(raw_q, dtype=np.float64)
         dq = np.asarray(raw_dq, dtype=np.float64)
@@ -174,4 +173,11 @@ class SensorBlock:
         noise = self._noise_generator.generate()
         measured_state = quantized + noise
 
-        return measured_state
+        return MeasuredState(
+            x=measured_state[0],
+            theta1=measured_state[1],
+            theta2=measured_state[2],
+            x_dot=measured_state[3],
+            theta1_dot=measured_state[4],
+            theta2_dot=measured_state[5],
+        )

@@ -13,6 +13,7 @@ from .datatypes import (
     State,
     StateDot,
 )
+from packages.simulation.CO.engine import MotorInertia
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -230,6 +231,28 @@ class Controller(ABC):
 
         # Память
         self._last_control_action: float = 0.0
+        self._motor_inertia: MotorInertia | None = None
+        # Блоки сглаживания для управляющего сигнала
+        # action_filter — сглаживание на этапе ДО ограничения (для подавления импульсов)
+        # action_smooth — сглаживание итогового (обрязанного) сигнала перед выдачей
+        _action_filter_cutoff = getattr(config, "action_filter_cutoff_hz", None)
+        _action_smooth_cutoff = getattr(config, "action_smoothing_cutoff_hz", None)
+        if _action_filter_cutoff is not None and _action_filter_cutoff > 0.0:
+            tau_af = 1.0 / (2.0 * np.pi * float(_action_filter_cutoff))
+            self._alpha_action_filter = float(self._dt) / (tau_af + float(self._dt))
+        else:
+            self._alpha_action_filter = 1.0
+        if _action_smooth_cutoff is not None and _action_smooth_cutoff > 0.0:
+            tau_as = 1.0 / (2.0 * np.pi * float(_action_smooth_cutoff))
+            self._alpha_action_smooth = float(self._dt) / (tau_as + float(self._dt))
+        else:
+            self._alpha_action_smooth = 1.0
+        self._action_filtered: float | None = None
+        self._action_smoothed: float | None = None
+
+    def set_motor_inertia(self, time_constant: float) -> None:
+        """Установить модель инерционности двигателя."""
+        self._motor_inertia = MotorInertia(time_constant)
 
     # ── Свойства ──────────────────────────────────────────────────────────
 
@@ -307,16 +330,34 @@ class Controller(ABC):
         # ── 4. Закон управления (абстрактный) ──────────────────────────
         F_raw = self.get_action(s_clean, target_state)
 
-        # ── 5. Насыщение ───────────────────────────────────────────────
-        F_clipped = float(np.clip(F_raw, -self._max_force, self._max_force))
+        # ── 5. Сглаживание сформированного сигнала до ограничения (action_filter)
+        if self._action_filtered is None:
+            self._action_filtered = float(F_raw)
+        else:
+            self._action_filtered = (
+                (1.0 - self._alpha_action_filter) * self._action_filtered
+                + self._alpha_action_filter * float(F_raw)
+            )
 
-        # ── 5.1 Сглаживание (инерция двигателя) ────────────────────────
-        # EMA-фильтр для сглаживания скачков силы
-        alpha_force = 0.5  # коэффициент сглаживания (можно вынести в конфиг)
-        F_smoothed = (1.0 - alpha_force) * self._last_control_action + alpha_force * F_clipped
+        # ── 6. Насыщение (clipping)
+        F_clipped = float(np.clip(self._action_filtered, -self._max_force, self._max_force))
 
-        # ── 6. Сохранение и возврат ────────────────────────────────────
-        self._last_control_action = F_smoothed
+        # ── 7. Сглаживание итогового (обрезанного) сигнала перед выдачей (action_smooth)
+        if self._action_smoothed is None:
+            self._action_smoothed = F_clipped
+        else:
+            self._action_smoothed = (
+                (1.0 - self._alpha_action_smooth) * self._action_smoothed
+                + self._alpha_action_smooth * F_clipped
+            )
+
+        # ── 8. Модель инерционности мотора (если задана) применяется к сглаженному сигналу
+        output_F = self._action_smoothed
+        if self._motor_inertia is not None:
+            output_F = self._motor_inertia.update(output_F, self._dt)
+
+        # ── 9. Сохранение и возврат
+        self._last_control_action = float(output_F)
         return self._last_control_action
 
     # ── Абстрактный метод (закон управления) ──────────────────────────────
@@ -352,4 +393,6 @@ class Controller(ABC):
         """
         self._differentiator.reset()
         self._signal_filter.reset()
+        if self._motor_inertia is not None:
+            self._motor_inertia.reset()
         self._last_control_action = 0.0

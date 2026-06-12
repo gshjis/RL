@@ -7,22 +7,18 @@
 
 from __future__ import annotations
 
-import sys
+import numpy as np
 
 from packages.simulation.CO.datatypes import State
-import numpy as np
-import pygame
-
 from packages.simulation.CO import (
     ControllerConfig,
-    MeasuredState,
     NoiseForce,
     ObjectOfControl,
     PlantConfig,
-    SensorBlock,
     SensorConfig,
 )
 from packages.controllers.PID import PIDController
+from packages.simulation.GUI import PendulumViewer
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -32,20 +28,20 @@ from packages.controllers.PID import PIDController
 PLANT_CONFIG = PlantConfig(
     M=1.0,          # масса тележки, кг
     m1=0.3,         # масса маятника, кг
-    m2=0.0,         # второе звено отключено
+    m2=0.0,         # второе звено включено
     l1=1.0,         # длина маятника, м
     l2=0.0,
     L1=0.7,         # расстояние до ЦМ маятника, м
     L2=0.0,
     J1=0.02,        # момент инерции маятника, кг·м²
-    J2=0.0,
+    J2=0.00,
     g=-9.81,         # ускорение свободного падения, м/с²
     b_c=0.05,       # вязкое трение тележки
     b_1=0.05,      # вязкое трение в шарнире
-    b_2=0.0,
-    single_pendulum_mode=True,   # однозвенный режим
+    b_2=0.00,
+    single_pendulum_mode=True,   # двухзвенный режим
     backslash_mode=False,        # люфт выключен
-    init_q=(0.0, np.pi, 0.0),   # маятник вверху
+    init_q=(-1, np.pi, 0.0),   # маятник вверху
     init_dq=(0.0, 0.0, 0.0),
 )
 
@@ -69,14 +65,29 @@ CONTROLLER_CONFIG = ControllerConfig(
     dt=0.005,                    # такт УУ 200 Гц
     max_force=30.0,              # макс. сила мотора, Н
     has_velocity_sensors=False,  
-    differentiator_cutoff_hz=None,
-    filter_cutoff_hz=1,
-    gains=[0, 0, 0, 0]
+    differentiator_cutoff_hz=20.0, # фильтрация дифференциатора
+    filter_cutoff_hz=10.0,         # фильтрация сигнала
+    gains=[110.0, 40.0, 20.0, -1.0, -1]   # [Kp, Ki, Kd, Kx, Kdx]
 )
 
-from packages.simulation.GUI import PendulumViewer
+# Инициализация контроллера
+controller = PIDController(CONTROLLER_CONFIG)
+# Добавляем инерционность двигателя (tau = 0.05 с)
+controller.set_motor_inertia(time_constant=0.05)
+controller.train(PLANT_CONFIG, SENSOR_CONFIG, NoiseForce(value=0.05), target_state=State(0, np.pi, 0))
+# Инициализация объекта управления
+plant = ObjectOfControl(PLANT_CONFIG)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Запуск симуляции
+# ═══════════════════════════════════════════════════════════════════════════
 
 window = PendulumViewer(
-    PLANT_CONFIG, SENSOR_CONFIG, NoiseForce(value=0.0), target_state=State(0, np.pi, 0)
+    plant,
+    SENSOR_CONFIG,
+    NoiseForce(value=0.05),
+    controller=controller,
+    # terminate_condition=lambda p: (abs(p.q[1] - np.pi) > np.radians(45.0)) or (abs(p.q[0]) > 5.0),
+    target_state=State(0, np.pi, 0),
 )
 window.use()

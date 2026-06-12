@@ -18,7 +18,7 @@ scipy = "^1.17.1"
 pid = {path = "packages/controllers/PID", develop = true}
 gui = {path = "packages/simulation/GUI", develop = true}
 numba = "^0.65.1"
-
+ffmpeg = "^1.4"
 
 [[tool.poetry.source]]
 name = "pytorch-cpu"
