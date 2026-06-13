@@ -1,0 +1,99 @@
+"""Функции отрисовки для PendulumViewer."""
+
+from __future__ import annotations
+
+import numpy as np
+import pygame
+from typing import Tuple
+
+from .constants import (
+    BLACK,
+    WHITE,
+    RED,
+    GREEN,
+    GRAY,
+    ORANGE,
+    WIDTH,
+    HEIGHT,
+    SCALE,
+    CART_W,
+    CART_H,
+    WHEEL_R,
+    PEND_R,
+    TRACK_Y,
+    FORCE_SCALE,
+    FPS,
+)
+
+
+def draw_cart(screen: pygame.Surface, cart_x_px: int, cart_y_px: int) -> None:
+    """Draw cart at pixel coordinates (cart_x_px, cart_y_px).
+
+    cart_y_px should be provided by the caller to keep coordinates consistent
+    with other draw_* functions.
+    """
+    pygame.draw.rect(
+        screen, WHITE,
+        (cart_x_px - CART_W // 2, cart_y_px - CART_H // 2, CART_W, CART_H),
+        2,
+    )
+    for offset in (-CART_W // 4, CART_W // 4):
+        pygame.draw.circle(screen, WHITE, (cart_x_px + offset, cart_y_px + WHEEL_R), WHEEL_R, 2)
+
+
+def draw_pendulums(screen: pygame.Surface, cart_x_px: int, cart_y_px: int, th1: float, th2: float, is_single: bool) -> None:
+    """Рисует подвесы относительно пиксельной позиции тележки (cart_x_px, cart_y_px)."""
+    pivot1 = (cart_x_px, cart_y_px - CART_H // 2)
+    pend1_x = pivot1[0] + 1.0 * SCALE * np.sin(th1)
+    pend1_y = pivot1[1] + 1.0 * SCALE * np.cos(th1)
+    pygame.draw.line(screen, ORANGE, pivot1, (pend1_x, pend1_y), 4)
+    pygame.draw.circle(screen, RED, (int(pend1_x), int(pend1_y)), PEND_R)
+
+    if not is_single:
+        pivot2 = (pend1_x, pend1_y)
+        pend2_x = pivot2[0] + 1.0 * SCALE * np.sin(th1 + th2)
+        pend2_y = pivot2[1] + 1.0 * SCALE * np.cos(th1 + th2)
+        pygame.draw.line(screen, ORANGE, pivot2, (pend2_x, pend2_y), 4)
+        pygame.draw.circle(screen, RED, (int(pend2_x), int(pend2_y)), PEND_R)
+
+
+def draw_force_arrow(screen: pygame.Surface, applied_force: float, cart_x_px: int, cart_y_px: int) -> None:
+    if abs(applied_force) > 0.5:
+        arrow_len = float(np.clip(abs(applied_force) * FORCE_SCALE, 10, 150))
+        direction = 1 if applied_force > 0 else -1
+        start_x = cart_x_px
+        end_x = cart_x_px + int(direction * arrow_len)
+        color = GREEN if applied_force > 0 else RED
+        pygame.draw.line(screen, color, (start_x, cart_y_px), (end_x, cart_y_px), 4)
+        tip = 10
+        pygame.draw.line(screen, color, (end_x, cart_y_px), (end_x - direction * tip, cart_y_px - tip // 2), 3)
+        pygame.draw.line(screen, color, (end_x, cart_y_px), (end_x - direction * tip, cart_y_px + tip // 2), 3)
+
+
+def draw_hud(screen: pygame.Surface, font: pygame.font.Font, lines: list[str]) -> None:
+    for i, line in enumerate(lines):
+        surf = font.render(line, True, GREEN)
+        screen.blit(surf, (20, 20 + i * 22))
+
+
+def draw_record_button(screen: pygame.Surface, font: pygame.font.Font, recording: bool) -> None:
+    rec_text = "REC" if recording else "REC"
+    rec_color = RED if recording else GRAY
+    btn_rect = (WIDTH - 120, 10, 110, 28)
+    pygame.draw.rect(screen, (40, 40, 40), btn_rect)
+    rec_surf = font.render(f"[{rec_text}] Record", True, rec_color)
+    screen.blit(rec_surf, (btn_rect[0] + 8, btn_rect[1] + 6))
+
+
+def draw_target_marker(screen: pygame.Surface, cart_x_px: int, cart_y_px: int, color: Tuple[int, int, int], w: int, h: int, value_str: str) -> None:
+    """Draw the target marker (a vertical rectangle) at cart_x_px, aligned to cart_y_px.
+
+    value_str is rendered above the marker.
+    """
+    # draw a round marker (dot) on the rail line at cart_x_px
+    radius = max(4, w // 2)
+    pygame.draw.circle(screen, color, (cart_x_px, cart_y_px), radius)
+    # small label under the dot showing the X coordinate
+    font = pygame.font.SysFont("Consolas", 14, bold=False)
+    surf = font.render(value_str, True, (200, 200, 200))
+    screen.blit(surf, (cart_x_px - surf.get_width() // 2, cart_y_px + radius + 4))

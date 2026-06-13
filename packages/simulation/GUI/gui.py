@@ -25,32 +25,17 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorBlock,
     SensorConfig,
-    State,
+    # State импорт удалён (не используется)
 )
+from .constants import *
+from .dialogs import ask_recording, ask_save_video
+from .dialogs import ask_recording, ask_save_video, ask_input_target
+from .recorder import compile_video
+from .draw import draw_cart, draw_pendulums, draw_force_arrow, draw_hud, draw_record_button, draw_target_marker
+from .event_controller import EventController
+from .physics_runner import PhysicsRunner
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Константы отрисовки
-# ═══════════════════════════════════════════════════════════════════════════
-
-BLACK = (10, 10, 10)
-WHITE = (220, 220, 220)
-RED = (255, 60, 60)
-GREEN = (60, 255, 60)
-GRAY = (100, 100, 100)
-ORANGE = (255, 180, 30)
-
-WIDTH, HEIGHT = 1200, 700
-FPS = 60
-SCALE = 200.0
-CART_W = 60
-CART_H = 30
-WHEEL_R = 8
-PEND_R = 6
-TRACK_Y = 550
-FORCE_SCALE = 3.0
-
-PHYSICS_DT = 0.0005
-SUBTICKS = int(PHYSICS_DT/0.00005)
+# Константы импортируются напрямую из .constants, не следует переприсваивать их
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -109,76 +94,56 @@ class PendulumViewer:
         pygame.display.set_caption(title)
         # Запись видео — папка по умолчанию: корень проекта (абсолютный путь)
         self._recording: bool = False
-        self._record_dir: str | None = os.path.abspath(".")
+        self._record_dir: str = os.path.abspath(".")
         self._frame_index: int = 0
         # Флаг — нужно собрать видео после завершения записи
         self._need_compile: bool = False
+
+        # Подсистемы (разделение ответственности)
+        self._event_controller = EventController(self._screen, self._clock)
+        self._physics_runner = PhysicsRunner(self._plant)
+        from .renderer import Renderer
+        from .recorder_obj import Recorder
+
+        self._renderer = Renderer(self._screen, self._font, self._controller)
+        # Используем единый интерфейс записи через объект Recorder
+        self._recorder = Recorder(self._record_dir)
+        # Target marker state (only shown in manual mode)
+        from .constants import MARKER_COLOR, MARKER_HOVER_COLOR, MARKER_SPEED, MARKER_THROTTLE_MS, MARKER_MIN_X, MARKER_MAX_X, MARKER_W, MARKER_H
+        self._marker_color = MARKER_COLOR
+        self._marker_hover_color = MARKER_HOVER_COLOR
+        self._marker_speed = MARKER_SPEED
+        self._marker_throttle_ms = MARKER_THROTTLE_MS
+        self._marker_min_x = MARKER_MIN_X
+        self._marker_max_x = MARKER_MAX_X
+        self._marker_w = MARKER_W
+        self._marker_h = MARKER_H
+        # Marker logical position (meters) initialized from target_state
+        self._marker_x = float(self._target.x)
+        self._marker_dragging = False
+        self._last_marker_update_ms = 0
 
     # ── Публичный метод ───────────────────────────────────────────────────
 
     def use(self) -> None:
         """Запустить главный цикл визуализации (блокирующий)."""
         # Перед стартом показать GUI-диалог для подтверждения записи (в окне pygame)
-        def _ask_recording() -> bool:
-            # Отрисовать простое окно с текстом и ожидать Y/N клавишу или клик по кнопкам
-            asking = True
-            choice = False
-            font = pygame.font.SysFont("Consolas", 20, bold=True)
-            # Прямоугольник диалога
-            dialog_w, dialog_h = 520, 140
-            dialog_rect = pygame.Rect((WIDTH - dialog_w) // 2, (HEIGHT - dialog_h) // 2, dialog_w, dialog_h)
-            btn_yes = pygame.Rect(dialog_rect.right - 180, dialog_rect.bottom - 50, 70, 32)
-            btn_no = pygame.Rect(dialog_rect.right - 90, dialog_rect.bottom - 50, 70, 32)
-
-            while asking:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        return False
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_y:
-                            return True
-                        if event.key == pygame.K_n or event.key == pygame.K_ESCAPE:
-                            return False
-                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                        mx, my = event.pos
-                        if btn_yes.collidepoint(mx, my):
-                            return True
-                        if btn_no.collidepoint(mx, my):
-                            return False
-
-                # Рисуем диалог
-                self._screen.fill(BLACK)
-                pygame.draw.rect(self._screen, (30, 30, 30), dialog_rect)
-                txt = font.render("Record simulation to video?", True, GREEN)
-                self._screen.blit(txt, (dialog_rect.x + 20, dialog_rect.y + 20))
-                hint = font.render("Press Y / N or click a button", True, GRAY)
-                self._screen.blit(hint, (dialog_rect.x + 20, dialog_rect.y + 60))
-
-                pygame.draw.rect(self._screen, (50, 120, 50), btn_yes)
-                pygame.draw.rect(self._screen, (120, 50, 50), btn_no)
-                yes_s = font.render("Yes", True, WHITE)
-                no_s = font.render("No", True, WHITE)
-                self._screen.blit(yes_s, (btn_yes.x + 18, btn_yes.y + 6))
-                self._screen.blit(no_s, (btn_no.x + 22, btn_no.y + 6))
-
-                pygame.display.flip()
-                self._clock.tick(FPS)
-
-            return choice
-
-        if _ask_recording():
-            import tempfile
-
-            d = tempfile.mkdtemp(prefix="pendulum_rec_", dir=self._record_dir)
-            self._record_dir = d
-            self._frame_index = 0
-            self._recording = True
-            self._need_compile = True
+        if ask_recording(self._screen, self._clock):
+            try:
+                self._recorder.start()
+                self._record_dir = self._recorder.record_dir
+                self._frame_index = self._recorder.frame_index
+                self._recording = self._recorder.recording
+                self._need_compile = self._recorder.need_compile
+            except Exception:
+                self._recording = False
         else:
             self._recording = False
         running = True
         manual_force = 0.0
-        force_per_frame = 20.0
+        # force_per_frame вынесена в constants
+        from .constants import FORCE_PER_FRAME
+        force_per_frame = FORCE_PER_FRAME
         # Засечь момент старта (ms)
         self._start_ticks = pygame.time.get_ticks()
 
@@ -191,47 +156,40 @@ class PendulumViewer:
         prev_ticks = pygame.time.get_ticks()
 
         while running:
-            # ── События ────────────────────────────────────────────────
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    mx, my = event.pos
-                    # Кнопка записи: правая верхняя область
-                    btn_rect = (WIDTH - 120, 10, 110, 28)
-                    if btn_rect[0] <= mx <= btn_rect[0] + btn_rect[2] and btn_rect[1] <= my <= btn_rect[1] + btn_rect[3]:
-                        # переключить запись
-                        self._recording = not self._recording
-                        if self._recording:
-                            import tempfile
+            # ── События (сейчас обрабатываются EventController)
+            actions = self._event_controller.poll()
+            # Обработка стрелок через события KEYDOWN (надёжнее чем get_pressed)
+            # raw events доступны в actions['events']
+            # Поддержка непрерывного удержания клавиш: используем get_pressed
+            if self._controller is not None:
+                keys = pygame.key.get_pressed()
+                changed = False
+                if keys[pygame.K_LEFT]:
+                    if self._marker_min_x is None:
+                        self._marker_x -= 0.05
+                    else:
+                        self._marker_x = max(self._marker_min_x, self._marker_x - 0.05)
+                    changed = True
+                if keys[pygame.K_RIGHT]:
+                    if self._marker_max_x is None:
+                        self._marker_x += 0.05
+                    else:
+                        self._marker_x = min(self._marker_max_x, self._marker_x + 0.05)
+                    changed = True
 
-                            # Создать директорию для кадров внутри корня проекта по умолчанию
-                            # (self._record_dir уже содержит абсолютный путь к корню проекта)
-                            d = tempfile.mkdtemp(prefix="pendulum_rec_", dir=self._record_dir)
-                            self._record_dir = d
-                            self._frame_index = 0
-                            self._need_compile = False
-                        else:
-                            # при остановке записи — сначала сохранить дополнительный финальный кадр,
-                            # затем собрать видео из накопленных кадров
-                            try:
-                                if self._record_dir is not None:
-                                    # сохранить финальный кадр, если возможно
-                                    fname = f"frame_{self._frame_index:06d}.png"
-                                    path = os.path.join(self._record_dir, fname)
-                                    try:
-                                        pygame.image.save(self._screen, path)
-                                        self._frame_index += 1
-                                    except Exception:
-                                        pass
+                if changed:
+                    self._target.x = float(self._marker_x)
+                    self._last_marker_update_ms = pygame.time.get_ticks()
+            # Сохранить сырые события для обработки маркера и других модалей
+            self._last_events = actions.get("events", [])
+            if not actions.get("running", True):
+                running = False
+                if actions.get("quit", False):
+                    break
 
-                                    if self._frame_index > 0:
-                                        # пометить запрос на компиляцию — фактическая сборка выполнится после цикла
-                                        self._need_compile = True
-                            except Exception:
-                                # не фатально — пропускаем ошибки сохранения/сборки
-                                pass
-                            # Не удаляем self._record_dir здесь — сброс произойдёт после основного цикла
+            if actions.get("toggle_record", False):
+                # переключить запись
+                self._toggle_recording()
 
             keys = pygame.key.get_pressed()
             if keys[pygame.K_ESCAPE] or keys[pygame.K_q]:
@@ -268,8 +226,7 @@ class PendulumViewer:
 
                         # выполнить физику с мелким шагом PHYSICS_DT в течение control interval
                         steps_ph = int(round((control_interval_ms / 1000.0) / PHYSICS_DT))
-                        for __ in range(max(1, steps_ph)):
-                            self._plant.update_physics(F, self._noise, PHYSICS_DT)
+                        self._physics_runner.step(F, self._noise, PHYSICS_DT, steps_ph)
 
                     viz_force = F
                 else:
@@ -294,30 +251,18 @@ class PendulumViewer:
                     # Зафиксировать прошедшее время при остановке
                     self._elapsed_when_terminated = pygame.time.get_ticks() - self._start_ticks
 
-        # ── Отрисовка ──────────────────────────────────────────────
+            # ── Отрисовка ──────────────────────────────────────────────
             self._draw(viz_force)
+            # Обработка ввода мыши для маркера цели
+            self._handle_marker_events()
 
             # Сохранение кадра при записи (каждый кадр цикла)
             # Сохраняем кадры синхронно с управляющим тактом (чтобы в видео fps == симуляции)
-            if self._recording and self._record_dir is not None:
+            if self._recording:
                 # аккумулировать прошедшее время для сохранения
                 last_save_acc_ms += dt_ms
-                try:
-                    sim_interval_ms = int(self._controller._dt * 1000.0) if self._controller is not None else int(1.0 / FPS * 1000.0)
-                except Exception:
-                    sim_interval_ms = int(1.0 / FPS * 1000.0)
-
-                # сохранять один кадр на каждый управляющий такт
-                if last_save_acc_ms >= sim_interval_ms:
-                    last_save_acc_ms = last_save_acc_ms % sim_interval_ms
-                    fname = f"frame_{self._frame_index:06d}.png"
-                    path = os.path.join(self._record_dir, fname)
-                    try:
-                        pygame.image.save(self._screen, path)
-                        self._frame_index += 1
-                    except Exception:
-                        # если не удалось сохранить кадр, продолжаем без прерывания
-                        pass
+                # делегируем сохранение кадра рекордеру
+                last_save_acc_ms = self._save_frame_if_recording(last_save_acc_ms)
 
             # Если запись была остановлена и помечена для компиляции — выполнить сборку
             if not self._recording and self._need_compile and self._record_dir is not None:
@@ -326,13 +271,13 @@ class PendulumViewer:
                         sim_interval_ms = int(self._controller._dt * 1000.0) if self._controller is not None else int(1.0 / FPS * 1000.0)
                     except Exception:
                         sim_interval_ms = int(1.0 / FPS * 1000.0)
+
                     # Вычислить фактическую частоту кадров: frames / simulated_seconds
                     try:
                         import glob
 
                         frames = sorted(glob.glob(os.path.join(self._record_dir, "frame_*.png")))
                         n_frames = len(frames)
-                        # длительность симуляции в секундах — от старта до текущего момента или до остановки
                         if self._elapsed_when_terminated is not None:
                             sim_seconds = self._elapsed_when_terminated / 1000.0
                         else:
@@ -343,11 +288,16 @@ class PendulumViewer:
                             sim_fps = max(1, round(1000.0 / sim_interval_ms))
                     except Exception:
                         sim_fps = max(1, round(1000.0 / sim_interval_ms))
-                    self._compile_video(self._record_dir, sim_fps)
+
+                    try:
+                        # используем Recorder как единый интерфейс
+                        self._recorder.compile(sim_fps)
+                    except Exception:
+                        # не фатально — пропускаем ошибки сборки
+                        pass
                 finally:
                     # сброс состояния
                     self._need_compile = False
-                    self._record_dir = None
 
         # Перед выходом: если были накоплены кадры, спросить сохранить ли видео
         if self._record_dir is not None:
@@ -355,92 +305,104 @@ class PendulumViewer:
             try:
                 import glob
 
-                frames = sorted(glob.glob(os.path.join(self._record_dir, "frame_*.png")))
+                if self._record_dir is None:
+                    frames = []
+                else:
+                    frames = sorted(glob.glob(os.path.join(self._record_dir, "frame_*.png")))
             except Exception:
                 frames = []
             if frames:
                 # Показать GUI-диалог для подтверждения сохранения видео
-                def _ask_save_video(n_frames: int) -> bool:
-                    asking = True
-                    font = pygame.font.SysFont("Consolas", 18, bold=True)
-                    dialog_w, dialog_h = 560, 140
-                    dialog_rect = pygame.Rect((WIDTH - dialog_w) // 2, (HEIGHT - dialog_h) // 2, dialog_w, dialog_h)
-                    btn_yes = pygame.Rect(dialog_rect.right - 180, dialog_rect.bottom - 50, 70, 32)
-                    btn_no = pygame.Rect(dialog_rect.right - 90, dialog_rect.bottom - 50, 70, 32)
-
-                    while asking:
-                        for event in pygame.event.get():
-                            if event.type == pygame.QUIT:
-                                return False
-                            if event.type == pygame.KEYDOWN:
-                                if event.key == pygame.K_y:
-                                    return True
-                                if event.key == pygame.K_n or event.key == pygame.K_ESCAPE:
-                                    return False
-                            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                                mx, my = event.pos
-                                if btn_yes.collidepoint(mx, my):
-                                    return True
-                                if btn_no.collidepoint(mx, my):
-                                    return False
-
-                        # Рисуем диалог
-                        self._screen.fill(BLACK)
-                        pygame.draw.rect(self._screen, (30, 30, 30), dialog_rect)
-                        txt = font.render(f"Save recorded video from {n_frames} frames?", True, GREEN)
-                        self._screen.blit(txt, (dialog_rect.x + 20, dialog_rect.y + 20))
-                        hint = font.render("Press Y / N or click a button", True, GRAY)
-                        self._screen.blit(hint, (dialog_rect.x + 20, dialog_rect.y + 60))
-
-                        pygame.draw.rect(self._screen, (50, 120, 50), btn_yes)
-                        pygame.draw.rect(self._screen, (120, 50, 50), btn_no)
-                        yes_s = font.render("Yes", True, WHITE)
-                        no_s = font.render("No", True, WHITE)
-                        self._screen.blit(yes_s, (btn_yes.x + 18, btn_yes.y + 6))
-                        self._screen.blit(no_s, (btn_no.x + 22, btn_no.y + 6))
-
-                        pygame.display.flip()
-                        self._clock.tick(FPS)
-
-                    return False
-
-                try:
-                    if _ask_save_video(len(frames)):
-                        # скомпилировать и затем удалить кадры, оставив только ролик
+                if ask_save_video(self._screen, self._clock, len(frames)):
+                    try:
                         try:
-                            try:
-                                sim_interval_ms = int(self._controller._dt * 1000.0) if self._controller is not None else int(1.0 / FPS * 1000.0)
-                            except Exception:
-                                sim_interval_ms = int(1.0 / FPS * 1000.0)
-                            try:
-                                import glob
+                            sim_interval_ms = int(self._controller._dt * 1000.0) if self._controller is not None else int(1.0 / FPS * 1000.0)
+                        except Exception:
+                            sim_interval_ms = int(1.0 / FPS * 1000.0)
+                        try:
+                            sim_fps = self._compute_sim_fps(sim_interval_ms)
+                        except Exception:
+                            sim_fps = max(1, round(1000.0 / sim_interval_ms))
 
-                                frames = sorted(glob.glob(os.path.join(self._record_dir, "frame_*.png")))
-                                n_frames = len(frames)
-                                if self._elapsed_when_terminated is not None:
-                                    sim_seconds = self._elapsed_when_terminated / 1000.0
-                                else:
-                                    sim_seconds = (pygame.time.get_ticks() - self._start_ticks) / 1000.0
-                                if sim_seconds > 0 and n_frames > 0:
-                                    sim_fps = max(1, round(n_frames / sim_seconds))
-                                else:
-                                    sim_fps = max(1, round(1000.0 / sim_interval_ms))
-                            except Exception:
-                                sim_fps = max(1, round(1000.0 / sim_interval_ms))
-                            self._compile_video(self._record_dir, sim_fps)
-                            # удалить png-файлы
-                            for p in frames:
-                                try:
-                                    os.remove(p)
-                                except Exception:
-                                    pass
+                        try:
+                            if hasattr(self, '_recorder') and self._recorder is not None:
+                                self._recorder.compile(sim_fps)
+                            else:
+                                compile_video(self._record_dir, sim_fps)
                         except Exception:
                             pass
-                except Exception:
-                    pass
+
+                        # удалить png-файлы
+                        for p in frames:
+                            try:
+                                os.remove(p)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
 
         pygame.quit()
         sys.exit(0)
+
+    def _handle_marker_events(self) -> None:
+        """Обрабатывать события мыши для перетаскивания маркера и обновлять target_state.x.
+
+        Использует события, собранные EventController.poll() и сохранённые в
+        self._last_events (чтобы избежать двойного чтения очереди событий).
+        """
+        events = getattr(self, '_last_events', [])
+        for event in events:
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                mx, my = event.pos
+                # проверим попадание в маркер по пиксельной позиции
+                cart_x_px = int(WIDTH // 2 + self._plant.q[0] * SCALE)
+                cart_y_px = TRACK_Y - CART_H // 2
+                rect = pygame.Rect(cart_x_px - self._marker_w // 2, cart_y_px - self._marker_h, self._marker_w, self._marker_h)
+                if rect.collidepoint(mx, my) and self._controller is not None:
+                    self._marker_dragging = True
+                    self._drag_offset_x = mx - rect.x
+                # кнопка ввода координаты при правом клике
+                elif rect.collidepoint(mx, my) and event.button == 3 and self._controller is not None:
+                    # вызвать диалог ввода
+                    val = ask_input_target(self._screen, self._clock, self._marker_x, self._marker_min_x, self._marker_max_x)
+                    if val is not None:
+                        self._marker_x = val
+                        self._target.x = float(val)
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                if getattr(self, '_marker_dragging', False):
+                    self._marker_dragging = False
+            elif event.type == pygame.MOUSEMOTION:
+                if getattr(self, '_marker_dragging', False):
+                    mx, my = event.pos
+                    # вычислить новую x в метрах, учитывая ограничение скорости
+                    new_px = mx - getattr(self, '_drag_offset_x', self._marker_w // 2)
+                    new_x = (new_px - WIDTH // 2) / SCALE
+                    # ограничение диапазона (если задан)
+                    if self._marker_min_x is not None:
+                        new_x = max(self._marker_min_x, new_x)
+                    if self._marker_max_x is not None:
+                        new_x = min(self._marker_max_x, new_x)
+                    # ограничение скорости (интерполяция по времени)
+                    now_ms = pygame.time.get_ticks()
+                    dt = max(1, now_ms - getattr(self, '_last_marker_update_ms', now_ms)) / 1000.0
+                    max_dx = self._marker_speed * dt
+                    dx = new_x - self._marker_x
+                    if abs(dx) > max_dx:
+                        dx = max_dx if dx > 0 else -max_dx
+                    self._marker_x += dx
+                    self._last_marker_update_ms = now_ms
+                    # обновить target_state и послать в контроллер с throttle
+                    self._throttled_send_target()
+
+    def _throttled_send_target(self) -> None:
+        """Отправляет обновление target_state.x в контроллер с учетом throttle времени."""
+        now_ms = pygame.time.get_ticks()
+        if now_ms - getattr(self, '_last_marker_update_ms', 0) >= self._marker_throttle_ms:
+                    try:
+                        # Обновляем локальное целевое состояние; контроллер будет читать его при следующем шаге
+                        self._target.x = float(self._marker_x)
+                    finally:
+                        self._last_marker_update_ms = now_ms
 
     # ── Сброс ─────────────────────────────────────────────────────────────
 
@@ -483,22 +445,117 @@ class PendulumViewer:
             # Не мешаем работе симуляции при ошибке сборки
             pass
 
+    # Удалён: старый метод _compile_video — сборка теперь делегируется Recorder.compile
+
+    # Вспомогательные методы для управления записью и кадрированием
+    def _toggle_recording(self) -> None:
+        import tempfile
+
+        if not self._recording:
+            d = tempfile.mkdtemp(prefix="pendulum_rec_", dir=self._record_dir)
+            self._record_dir = d
+            self._frame_index = 0
+            self._recording = True
+            self._need_compile = False
+            # обновить рекордер
+            if hasattr(self, '_recorder') and self._recorder is not None:
+                    # Recorder не обязательно имеет set_dir; синхронизируем значения напрямую
+                    try:
+                        self._recorder.record_dir = self._record_dir
+                        self._recorder.frame_index = self._frame_index
+                        self._recorder.recording = self._recording
+                        self._recorder.need_compile = self._need_compile
+                    except Exception:
+                        pass
+        else:
+            # при остановке записи — сохранить финальный кадр и пометить на сборку
+            try:
+                if self._record_dir is not None:
+                    fname = f"frame_{self._frame_index:06d}.png"
+                    path = os.path.join(self._record_dir, fname)
+                    try:
+                        pygame.image.save(self._screen, path)
+                        self._frame_index += 1
+                    except Exception:
+                        pass
+
+                    if self._frame_index > 0:
+                        self._need_compile = True
+            except Exception:
+                pass
+            self._recording = False
+
+    def _save_frame_if_recording(self, last_save_acc_ms: int) -> int:
+        """Сохраняет кадр если накоплено достаточно времени. Возвращает остаток аккумулятора времени."""
+        try:
+            sim_interval_ms = int(self._controller._dt * 1000.0) if self._controller is not None else int(1.0 / FPS * 1000.0)
+        except Exception:
+            sim_interval_ms = int(1.0 / FPS * 1000.0)
+
+        if last_save_acc_ms >= sim_interval_ms and self._recording and self._record_dir is not None:
+            last_save_acc_ms = last_save_acc_ms % sim_interval_ms
+            fname = f"frame_{self._frame_index:06d}.png"
+            path = os.path.join(self._record_dir, fname)
+            try:
+                pygame.image.save(self._screen, path)
+                self._frame_index += 1
+            except Exception:
+                pass
+        return last_save_acc_ms
+
+    def _compute_sim_fps(self, sim_interval_ms: int) -> int:
+        try:
+            import glob
+
+            frames = sorted(glob.glob(os.path.join(self._record_dir, "frame_*.png")))
+            n_frames = len(frames)
+            if self._elapsed_when_terminated is not None:
+                sim_seconds = self._elapsed_when_terminated / 1000.0
+            else:
+                sim_seconds = (pygame.time.get_ticks() - self._start_ticks) / 1000.0
+            if sim_seconds > 0 and n_frames > 0:
+                return max(1, round(n_frames / sim_seconds))
+        except Exception:
+            pass
+        return max(1, round(1000.0 / sim_interval_ms))
+
+    def _compile_video_dir(self) -> None:
+        try:
+            try:
+                sim_interval_ms = int(self._controller._dt * 1000.0) if self._controller is not None else int(1.0 / FPS * 1000.0)
+            except Exception:
+                sim_interval_ms = int(1.0 / FPS * 1000.0)
+            sim_fps = self._compute_sim_fps(sim_interval_ms)
+            # Используем единый интерфейс записи
+            if hasattr(self, '_recorder') and self._recorder is not None:
+                try:
+                    self._recorder.compile(sim_fps)
+                except Exception:
+                    # fallback to module-level compile
+                    try:
+                        compile_video(self._record_dir, sim_fps)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    compile_video(self._record_dir, sim_fps)
+                except Exception:
+                    pass
+        finally:
+            self._need_compile = False
+
+    # (старый wrapper удалён — используется _compile_video или Recorder.compile)
+
     # ── Отрисовка ─────────────────────────────────────────────────────────
 
     def _draw(self, applied_force: float) -> None:
-        self._screen.fill(BLACK)
-
         # Получение состояний из объекта управления
         q = self._plant.q
         dq = self._plant.dq
-        
-        # Определение количества звеньев
         is_single = self._plant.single_pendulum_mode
-        
         x = q[0]
         th1 = q[1]
         th2 = q[2] if not is_single else 0.0
-        
         dx = dq[0]
         dth1 = dq[1]
         dth2 = dq[2] if not is_single else 0.0
@@ -506,117 +563,72 @@ class PendulumViewer:
         cart_x_px = int(WIDTH // 2 + x * SCALE)
         cart_y_px = TRACK_Y - CART_H // 2
 
-        # Рельс
-        pygame.draw.line(
-            self._screen, GRAY, (0, TRACK_Y), (WIDTH, TRACK_Y), 2,
-        )
-
-        # Тележка
-        pygame.draw.rect(
-            self._screen, WHITE,
-            (cart_x_px - CART_W // 2, cart_y_px - CART_H // 2, CART_W, CART_H),
-            2,
-        )
-        for offset in (-CART_W // 4, CART_W // 4):
-            pygame.draw.circle(
-                self._screen, WHITE,
-                (cart_x_px + offset, TRACK_Y + WHEEL_R), WHEEL_R, 2,
-            )
-
-        # Маятник (звено 1)
-        pivot1 = (cart_x_px, cart_y_px - CART_H // 2)
-        pend1_x = pivot1[0] + 1.0 * SCALE * np.sin(th1)
-        pend1_y = pivot1[1] + 1.0 * SCALE * np.cos(th1)
-
-        pygame.draw.line(self._screen, ORANGE, pivot1, (pend1_x, pend1_y), 4)
-        pygame.draw.circle(self._screen, RED, (int(pend1_x), int(pend1_y)), PEND_R)
-
-        # Маятник (звено 2, если есть)
-        if not is_single:
-            pivot2 = (pend1_x, pend1_y)
-            pend2_x = pivot2[0] + 1.0 * SCALE * np.sin(th1 + th2)
-            pend2_y = pivot2[1] + 1.0 * SCALE * np.cos(th1 + th2)
-            pygame.draw.line(self._screen, ORANGE, pivot2, (pend2_x, pend2_y), 4)
-            pygame.draw.circle(self._screen, RED, (int(pend2_x), int(pend2_y)), PEND_R)
-
-        # Стрелка силы
-        if abs(applied_force) > 0.5:
-            arrow_len = float(np.clip(
-                abs(applied_force) * FORCE_SCALE, 10, 150,
-            ))
-            direction = 1 if applied_force > 0 else -1
-            start_x = cart_x_px
-            end_x = cart_x_px + int(direction * arrow_len)
-            color = GREEN if applied_force > 0 else RED
-            pygame.draw.line(
-                self._screen, color,
-                (start_x, cart_y_px), (end_x, cart_y_px), 4,
-            )
-            tip = 10
-            pygame.draw.line(
-                self._screen, color,
-                (end_x, cart_y_px),
-                (end_x - direction * tip, cart_y_px - tip // 2), 3,
-            )
-            pygame.draw.line(
-                self._screen, color,
-                (end_x, cart_y_px),
-                (end_x - direction * tip, cart_y_px + tip // 2), 3,
-            )
+        # Очистка и отрисовка сцены
+        self._screen.fill(BLACK)
+        pygame.draw.line(self._screen, GRAY, (0, TRACK_Y), (WIDTH, TRACK_Y), 2)
+        draw_cart(self._screen, cart_x_px, cart_y_px)
+        draw_pendulums(self._screen, cart_x_px, cart_y_px, th1, th2, is_single)
+        draw_force_arrow(self._screen, applied_force, cart_x_px, cart_y_px)
 
         # HUD
         mode = "PID" if self._controller else "РУЧНОЕ"
         gains_str = ""
-        if self._controller:
-            if hasattr(self._controller, "gains"):
-                g = self._controller.gains  # type: ignore[attr-defined]
-                gains_str = f"  Kp={g[0]:.1f}  Ki={g[1]:.1f}  Kd={g[2]:.1f}  Kx={g[3]:.1f}"
+        if self._controller and hasattr(self._controller, "gains"):
+            g = self._controller.gains  # type: ignore[attr-defined]
+            gains_str = f"  Kp={g[0]:.1f}  Ki={g[1]:.1f}  Kd={g[2]:.1f}  Kx={g[3]:.1f}"
         lines = [
             f"Сила: {applied_force:+.1f} Н  [{mode}]",
             f"x  = {x:+.3f} м      θ1 = {np.degrees(th1):+7.1f}°",
         ]
         if not is_single:
             lines.append(f"θ2 = {np.degrees(th2):+7.1f}°")
-        
         lines.append(f"ẋ  = {dx:+.3f} м/с   θ̇1 = {np.degrees(dth1):+7.1f}°/с")
         if not is_single:
             lines.append(f"θ̇2 = {np.degrees(dth2):+7.1f}°/с")
-
         if gains_str:
             lines.append(gains_str)
 
-        for i, line in enumerate(lines):
-            surf = self._font.render(line, True, GREEN)
-            self._screen.blit(surf, (20, 20 + i * 22))
+        draw_hud(self._screen, self._font, lines)
+        draw_record_button(self._screen, self._font, self._recording)
+        # Рисуем маркер цели, только если передан контроллер (в этом режиме GUI управляет target_state.x)
+        if self._controller is not None:
+            # вычислить пиксельную позицию маркера
+            marker_px = int(WIDTH // 2 + self._marker_x * SCALE)
+            marker_py = cart_y_px
+            # цвет зависит от hover — простая проверка позиции курсора
+            mx, my = pygame.mouse.get_pos()
+            rect = pygame.Rect(marker_px - self._marker_w // 2, marker_py - self._marker_h, self._marker_w, self._marker_h)
+            color = self._marker_color
+            if rect.collidepoint(mx, my):
+                color = self._marker_hover_color
+            draw_target_marker(self._screen, marker_px, marker_py, color, self._marker_w, self._marker_h, f"{self._marker_x:.3f}")
+            # Отладочный HUD: показать текущее значение маркера и его пикс. позицию
+            debug_s = f"MARKER x={self._marker_x:.3f} m  px={marker_px}  (use ←/→ to nudge by 0.05m)"
+            dbg_surf = self._font.render(debug_s, True, (180, 180, 180))
+            self._screen.blit(dbg_surf, (20, HEIGHT - 70))
+            # tiny indicator showing whether arrows were pressed recently
+            if getattr(self, '_last_marker_update_ms', 0) + 500 > pygame.time.get_ticks():
+                hint = self._font.render("[marker updated]", True, (200, 200, 100))
+                self._screen.blit(hint, (20, HEIGHT - 94))
 
-        hint = self._font.render(
-            "Пробел : сброс | Q / ESC : выход",
-            True, GRAY,
-        )
-        self._screen.blit(hint, (20, HEIGHT - 40))
-
-        # Вывести прошедшее время с старта
-        if hasattr(self, '_start_ticks'):
-            if self._terminated and self._elapsed_when_terminated is not None:
-                elapsed_ms = self._elapsed_when_terminated
-            else:
-                elapsed_ms = pygame.time.get_ticks() - self._start_ticks
-            elapsed_s = elapsed_ms / 1000.0
-            time_s = f"Время: {elapsed_s:.2f} с"
-            time_surf = self._font.render(time_s, True, GREEN)
-            self._screen.blit(time_surf, (WIDTH - 220, 20))
+        # Время и статус
+        elapsed_s = self._get_elapsed_time()
+        time_surf = self._font.render(f"Время: {elapsed_s:.2f} с", True, GREEN)
+        self._screen.blit(time_surf, (WIDTH - 220, 20))
 
         if self._terminated:
             term_surf = self._font.render("СИМУЛЯЦИЯ ОСТАНОВЛЕНА (Пробел - рестарт)", True, RED)
             self._screen.blit(term_surf, (WIDTH // 2 - term_surf.get_width() // 2, HEIGHT // 2))
 
-        # Кнопка записи (правый верхний угол)
-        rec_text = "REC" if self._recording else "REC"
-        rec_color = RED if self._recording else GRAY
-        btn_rect = (WIDTH - 120, 10, 110, 28)
-        pygame.draw.rect(self._screen, (40, 40, 40), btn_rect)
-        rec_surf = self._font.render(f"[{rec_text}] Record", True, rec_color)
-        self._screen.blit(rec_surf, (btn_rect[0] + 8, btn_rect[1] + 6))
-
         pygame.display.flip()
         self._clock.tick(FPS)
+
+    def _get_elapsed_time(self) -> float:
+        """Возвращает прошедшее время симуляции в секундах."""
+        if hasattr(self, '_start_ticks'):
+            if self._terminated and self._elapsed_when_terminated is not None:
+                elapsed_ms = self._elapsed_when_terminated
+            else:
+                elapsed_ms = pygame.time.get_ticks() - self._start_ticks
+            return elapsed_ms / 1000.0
+        return 0.0
