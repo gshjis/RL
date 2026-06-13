@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from packages.simulation.CO.datatypes import State
+from packages.simulation.CO.datatypes import MeasuredState, State
 from packages.simulation.CO import (
     ControllerConfig,
     NoiseForce,
@@ -74,7 +74,7 @@ CONTROLLER_CONFIG = ControllerConfig(
 controller = PIDController(CONTROLLER_CONFIG)
 # Добавляем инерционность двигателя (tau = 0.05 с)
 controller.set_motor_inertia(time_constant=0.05)
-# controller.train(PLANT_CONFIG, SENSOR_CONFIG, NoiseForce(value=0.05), target_state=State(0, np.pi, 0))
+controller.train(PLANT_CONFIG, SENSOR_CONFIG, NoiseForce(value=0.05), target_state=MeasuredState(0, np.pi, 0))
 # Инициализация объекта управления
 plant = ObjectOfControl(PLANT_CONFIG)
 
@@ -88,6 +88,6 @@ window = PendulumViewer(
     NoiseForce(value=0.05),
     controller=controller,
     # terminate_condition=lambda p: (abs(p.q[1] - np.pi) > np.radians(45.0)) or (abs(p.q[0]) > 5.0),
-    target_state=State(0, np.pi, 0),
+    target_state=MeasuredState(-4, np.pi, 0),
 )
 window.use()

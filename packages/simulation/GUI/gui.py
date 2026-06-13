@@ -80,8 +80,8 @@ class PendulumViewer:
         plant: ObjectOfControl,
         sensor_config: SensorConfig,
         noise: NoiseForce,
+        target_state: MeasuredState,
         controller: Controller | None = None,
-        target_state: State | None = None,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
     ) -> None:
         self._plant = plant

@@ -8,8 +8,6 @@ from numpy.typing import NDArray
 from .datatypes import (
     ControllerConfig,
     MeasuredState,
-    PlantConfig,
-    SensorConfig,
     State,
     StateDot,
 )
@@ -273,7 +271,7 @@ class Controller(ABC):
 
     # ── Шаблонный метод ───────────────────────────────────────────────────
 
-    def compute_control(self, measured_state: MeasuredState, target_state:State) -> float:
+    def compute_control(self, measured_state: MeasuredState, target_state:MeasuredState) -> float:
         """
         Основной рабочий метод (Template Method).
 
@@ -363,7 +361,7 @@ class Controller(ABC):
     # ── Абстрактный метод (закон управления) ──────────────────────────────
 
     @abstractmethod
-    def get_action(self, s_clean: MeasuredState, target_state:State) -> float:
+    def get_action(self, s_clean: MeasuredState, target_state:MeasuredState) -> float:
         """
         Абстрактный метод вычисления управляющего воздействия.
 

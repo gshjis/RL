@@ -2,10 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import numpy as np
-from numpy.typing import NDArray
-
-
 # ═══════════════════════════════════════════════════════════════════════════
 # Векторы состояния
 # ═══════════════════════════════════════════════════════════════════════════
@@ -106,6 +102,28 @@ class MeasuredState:
     x_dot: float = 0.0
     theta1_dot: float = 0.0
     theta2_dot: float = 0.0
+
+    def __add__(self, other: "MeasuredState") -> "MeasuredState":
+        """Покомпонентное сложение двух MeasuredState."""
+        return MeasuredState(
+            x=self.x + other.x,
+            theta1=self.theta1 + other.theta1,
+            theta2=self.theta2 + other.theta2,
+            x_dot=self.x_dot + other.x_dot,
+            theta1_dot=self.theta1_dot + other.theta1_dot,
+            theta2_dot=self.theta2_dot + other.theta2_dot,
+        )
+
+    def __sub__(self, other: "MeasuredState") -> "MeasuredState":
+        """Покомпонентное вычитание двух MeasuredState (self - other)."""
+        return MeasuredState(
+            x=self.x - other.x,
+            theta1=self.theta1 - other.theta1,
+            theta2=self.theta2 - other.theta2,
+            x_dot=self.x_dot - other.x_dot,
+            theta1_dot=self.theta1_dot - other.theta1_dot,
+            theta2_dot=self.theta2_dot - other.theta2_dot,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

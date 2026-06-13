@@ -4,7 +4,6 @@ from typing import Any, Callable
 
 import numpy as np
 from numpy.typing import NDArray
-from scipy.optimize import minimize
 
 from packages.simulation.CO import (
     Controller,
@@ -15,7 +14,6 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorBlock,
     SensorConfig,
-    State
 )
 
 
@@ -45,22 +43,23 @@ class PIDController(Controller):
 
     # ── Закон управления ──────────────────────────────────────────────────
 
-    def get_action(self, s_clean: MeasuredState, target_state:State) -> float:
-        x = target_state.x - s_clean.x
-        th1 = target_state.theta1 - s_clean.theta1
-        dth1 = -s_clean.theta1_dot
-        dx = -s_clean.x_dot
+    def get_action(self, s_clean: MeasuredState, target_state:MeasuredState) -> float:
 
-        self._integral += th1 * self._dt
+        error = target_state - s_clean
+
+        self._integral += error.theta1 * self._dt
 
         F = (
-            self._Kp * th1
+            self._Kp * error.theta1
             + self._Ki * self._integral
-            + self._Kd * dth1
-            + self._Kx * x
-            + self._Kdx * dx
+            + self._Kd * error.theta1_dot
+            + self._Kx * error.x
+            + self._Kdx * error.x_dot
         )
         return F
+
+    def reset_angel_integral(self) -> None:
+        self._integral = 0.0
 
     # ── Сброс ─────────────────────────────────────────────────────────────
 
@@ -79,7 +78,7 @@ class PIDController(Controller):
         alpha: float = 1.0,
         max_time: float = 10.0,
         method_options: dict[str, Any] | None = None,
-        target_state: State,
+        target_state: MeasuredState,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
     ) -> dict[str, Any]:
         # Более исследовательский метод оптимизации (стохастический поиск).
@@ -147,7 +146,7 @@ class PIDController(Controller):
         noise: NoiseForce,
         alpha: float,
         max_time: float,
-        target_state: State,
+        target_state: MeasuredState,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
     ) -> tuple[float, float]:
         plant = ObjectOfControl(plant_config)
