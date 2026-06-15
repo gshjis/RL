@@ -1,4 +1,4 @@
-from .datatypes import NoiseForce, PlantConfig, State
+from .datatypes import MeasuredState, NoiseForce, PlantConfig, State
 
 # Optional C++ backend (pybind11). If unavailable (e.g. no built extension), fall back.
 try:
@@ -157,8 +157,12 @@ class ObjectOfControl:
         self._backslash_mode: bool = config.backslash_mode
 
         # ── Вектор состояния ──────────────────────────────────────────
-        self._q: State = config.init_q
-        self._dq: State = config.init_dq
+        # Начальное состояние (для reset)
+        self._q_init: State = config.init_q
+        self._dq_init: State = config.init_dq
+
+        self._q: State = self._q_init
+        self._dq: State = self._dq_init
 
         self._dt = config.dt
         # ── Модель люфта ──────────────────────────────────────────────
@@ -169,6 +173,31 @@ class ObjectOfControl:
 
         # C++ backend state (gap position)
         self._cpp_backlash_gap_pos: float = 0.0
+
+        # Pre-create C++ objects for reuse (hot-loop optimization)
+        self._cpp_noise = None
+        self._cpp_params = None
+        self._cpp_q = None
+        self._cpp_dq = None
+        if _co_cpp is not None:
+            self._cpp_noise = _co_cpp.NoiseForce(float(0.0), float(0.0))
+            self._cpp_params = _co_cpp.PlantParams()
+            self._cpp_q = _co_cpp.State3()
+            self._cpp_dq = _co_cpp.StateDot3()
+            # Fill static params
+            self._cpp_params.M = self._M
+            self._cpp_params.m1 = self._m1
+            self._cpp_params.m2 = self._m2
+            self._cpp_params.l1 = self._l1
+            self._cpp_params.l2 = self._l2
+            self._cpp_params.L1 = self._L1
+            self._cpp_params.L2 = self._L2
+            self._cpp_params.J1 = self._J1
+            self._cpp_params.J2 = self._J2
+            self._cpp_params.g = self._g
+            self._cpp_params.b_c = self._b_c
+            self._cpp_params.b_1 = self._b_1
+            self._cpp_params.b_2 = self._b_2
 
     # ──────────────────────────────────────────────────────────────────────
     # Свойства
@@ -197,11 +226,6 @@ class ObjectOfControl:
     @single_pendulum_mode.setter
     def single_pendulum_mode(self, value: bool) -> None:
         self._single_mode = bool(value)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Вычислительное ядро — уравнения Лагранжа
-    # ──────────────────────────────────────────────────────────────────────
-
 
     # ──────────────────────────────────────────────────────────────────────
     # Публичный API
@@ -235,7 +259,12 @@ class ObjectOfControl:
                 "C++ backend (co_cpp) is not available. Rebuild the pybind11 module or keep the Python fallback enabled."
             )
 
-        noise_cpp = _co_cpp.NoiseForce(float(F_noise.mean), float(F_noise.std))
+        # Reuse objects instead of creating them every tick.
+        noise_cpp = self._cpp_noise
+        if noise_cpp is None:
+            raise RuntimeError("C++ backend objects are not initialized")
+        noise_cpp.mean = float(F_noise.mean)
+        noise_cpp.std = float(F_noise.std)
 
         if self._backslash_mode:
             backlash_alpha = self._backlash.alpha if self._backlash is not None else 0.0
@@ -244,27 +273,14 @@ class ObjectOfControl:
             backlash_alpha = 0.0
             backlash_m_mot = 1.0
 
-        params = _co_cpp.PlantParams()
-        params.M = self._M
-        params.m1 = self._m1
-        params.m2 = self._m2
-        params.l1 = self._l1
-        params.l2 = self._l2
-        params.L1 = self._L1
-        params.L2 = self._L2
-        params.J1 = self._J1
-        params.J2 = self._J2
-        params.g = self._g
-        params.b_c = self._b_c
-        params.b_1 = self._b_1
-        params.b_2 = self._b_2
+        params = self._cpp_params
+        q_cpp = self._cpp_q
+        dq_cpp = self._cpp_dq
 
-        q_cpp = _co_cpp.State3()
         q_cpp.x = self._q.x
         q_cpp.theta1 = self._q.theta1
         q_cpp.theta2 = self._q.theta2
 
-        dq_cpp = _co_cpp.StateDot3()
         dq_cpp.x_dot = self._dq.x
         dq_cpp.theta1_dot = self._dq.theta1
         dq_cpp.theta2_dot = self._dq.theta2
@@ -286,6 +302,23 @@ class ObjectOfControl:
         self._q = State(q_cpp.x, q_cpp.theta1, q_cpp.theta2)
         self._dq = State(dq_cpp.x_dot, dq_cpp.theta1_dot, dq_cpp.theta2_dot)
         return
+
+    def reset(self) -> None:
+        """Сбросить состояние модели к начальному.
+
+        Примечание
+        ----------
+        Начальные значения берутся из текущих внутренних параметров
+        (как было задано при конструировании).
+        """
+        # Используем зафиксированное начальное состояние, если оно сохранено.
+        if hasattr(self, "_q_init") and hasattr(self, "_dq_init"):
+            self._q = self._q_init.copy()
+            self._dq = self._dq_init.copy()
+            return
+
+        # Fallback: обнуляем скорости, координаты оставляем как есть.
+        self._dq = State(0.0, 0.0, 0.0)
 
     def get_clean_state(self) -> tuple[State, State]:
         """

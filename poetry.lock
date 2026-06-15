@@ -954,6 +954,19 @@ tests = ["check-manifest", "coverage (>=7.4.2)", "defusedxml", "markdown2", "ole
 xmp = ["defusedxml"]
 
 [[package]]
+name = "profiling"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = "^3.12"
+files = []
+develop = true
+
+[package.source]
+type = "directory"
+url = "profiling"
+
+[[package]]
 name = "pybind11"
 version = "3.0.4"
 description = "Seamless operability between C++11 and Python"
@@ -1111,6 +1124,19 @@ files = [
 
 [package.dependencies]
 six = ">=1.5"
+
+[[package]]
+name = "reinforce"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = "^3.12"
+files = []
+develop = true
+
+[package.source]
+type = "directory"
+url = "packages/controllers/REINFORCE"
 
 [[package]]
 name = "scipy"
@@ -1290,4 +1316,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "3d2ab023f2db16a6c3440f2e3573f98f4ab1ab24fc3235d275de63d23386bfa9"
+content-hash = "62716d768e7ef3d456d3f6e6595dd035daa86344f32f9ecde11aa4242351daa1"

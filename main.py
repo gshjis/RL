@@ -17,7 +17,7 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorConfig,
 )
-from packages.controllers.PID import PIDController
+from packages.controllers.REINFORCE import ReinforceController
 from packages.simulation.GUI import PendulumViewer
 
 
@@ -30,7 +30,7 @@ PLANT_CONFIG = PlantConfig(
     m1=0.3,         # масса маятника, кг
     m2=0.0,         # второе звено включено
     l1=1.0,         # длина маятника, м
-    l2=0.0,
+    l2=1.0,
     L1=0.7,         # расстояние до ЦМ маятника, м
     L2=0.0,
     J1=0.02,        # момент инерции маятника, кг·м²
@@ -72,15 +72,15 @@ CONTROLLER_CONFIG = ControllerConfig(
 )
 
 # Инициализация контроллера
-controller = PIDController(CONTROLLER_CONFIG)
+controller = ReinforceController(CONTROLLER_CONFIG)
 # Добавляем инерционность двигателя (tau = 0.05 с)
 controller.set_motor_inertia(time_constant=0.05)
-# controller.train(
-#     PLANT_CONFIG, 
-#     SENSOR_CONFIG, 
-#     NoiseForce(mean=0.05, std=0.01), 
-#     target_state=MeasuredState(0, np.pi, 0)
-# )
+controller.train(
+    PLANT_CONFIG,
+    SENSOR_CONFIG,
+    NoiseForce(mean=0.05, std=0.01),
+    target_state=MeasuredState(0, np.pi, 0),
+)
 # Инициализация объекта управления
 plant = ObjectOfControl(PLANT_CONFIG)
 

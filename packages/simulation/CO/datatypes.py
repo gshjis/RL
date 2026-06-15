@@ -275,7 +275,7 @@ class PlantConfig:
     b_1: float = 0.0
     b_2: float = 0.0
 
-    single_pendulum_mode: bool = False
+    single_pendulum_mode: bool = True
     backslash_mode: bool = False
     backlash_alpha: float = 0.0
     backlash_m_mot: float = 0.0

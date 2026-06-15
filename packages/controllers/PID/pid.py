@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-import packages.controllers.PID.cost_functions as cost_f
+import cost_functions as cost_f
 import numpy as np
 from numpy.typing import NDArray
 
@@ -77,65 +77,89 @@ class PIDController(Controller):
         plant_config: PlantConfig,
         sensor_config: SensorConfig,
         noise: NoiseForce,
-        *,
-        max_time: float = 10.0,
-        method_options: dict[str, Any] | None = None,
         target_state: MeasuredState,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
+        max_time: float = 10.0,
+        *,
+        method_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        # Более исследовательский метод оптимизации (стохастический поиск).
-        # Реализуем простую эволюционную стратегию: на каждой итерации
-        # генерируем партию кандидатов вокруг текущих параметров, оцениваем
-        # их и выбираем лучший; шаг (sigma) уменьшаем по расписанию.
-        rng = np.random.default_rng()
-        current = self.gains.copy()
+        """Настройка PID-параметров методом Iterative Feedback Tuning (IFT).
+
+        IFT здесь реализована как итеративное обновление параметров по оценке
+        направленного градиента на основе baseline и возмущённого эпизодов.
+        Это заменяет ранее стохастический поиск/ES.
+
+        method_options:
+        - maxiter (int, default 25)
+        - eps (float, default 1e-3)      # величина возмущения
+        - alpha (float, default 0.5)     # шаг оптимизации
+        - direction ("random"|"unit", default "random")
+        - seed (int|None, default None)
+
+        Возвращает словарь с лучшими параметрами и стоимостью.
+        """
+
+        opts = method_options or {}
+        max_iters = int(opts.get("maxiter", 25))
+        eps = float(opts.get("eps", 1e-3))
+        alpha = float(opts.get("alpha", 0.5))
+        direction = str(opts.get("direction", "random"))
+        seed = opts.get("seed", None)
+
+        rng = np.random.default_rng(seed)
+
+        plant = ObjectOfControl(plant_config)
+        sensor = SensorBlock(sensor_config)
+
+        x = self.gains.copy()
+        best_x = x.copy()
         best_J = float("inf")
-        best_x = current.copy()
 
-        max_iters = (method_options or {}).get("maxiter", 200)
-        pop_size = (method_options or {}).get("pop_size", 16)
-        sigma0 = (method_options or {}).get("sigma", 1.0)
-        sigma = float(sigma0)
+        for it in range(max_iters):
+            if direction == "unit":
+                d = np.ones_like(x)
+            else:
+                d = rng.normal(size=x.shape)
 
-        for it in range(int(max_iters)):
-            # уменьшение дисперсии по экспоненциальной схеме
-            sigma = sigma0 * (0.99 ** it)
+            # Нормируем направление
+            nd = float(np.linalg.norm(d))
+            if nd == 0.0:
+                d = np.ones_like(x)
+                nd = float(np.linalg.norm(d))
+            d = d / nd
 
-            # сгенерировать популяцию кандидатов
-            candidates = current + rng.normal(scale=sigma, size=(pop_size, current.size))
-
-            scores = np.zeros(pop_size, dtype=np.float64)
-            times = np.zeros(pop_size, dtype=np.float64)
-            for i in range(pop_size):
-                self.gains = candidates[i]
-                J, t = self._run_episode(
-                    plant_config, sensor_config, noise, max_time, target_state, terminate_condition
-                )
-                scores[i] = J
-                times[i] = t
-
-            # Найти лучшего в популяции
-            idx = int(np.argmin(scores))
-            if scores[idx] < best_J:
-                best_J = float(scores[idx])
-                best_x = candidates[idx].copy()
-
-            # Логирование прогресса
-            avg_J = float(np.mean(scores))
-            print(
-                f"[it {it:04d}] best={best_J:8.4f} avg={avg_J:8.4f} "
-                f"Kp={best_x[0]:.4f} Ki={best_x[1]:.4f} Kd={best_x[2]:.4f} "
-                f"Kx={best_x[3]:.4f} Kdx={best_x[4]:.4f} sigma={sigma:.4f}"
+            # baseline
+            self.gains = x
+            plant.reset()
+            J0, _t0 = self._run_episode(
+                plant, sensor, noise, max_time, target_state, terminate_condition
             )
 
-            # Сдвинуть центр к лучшему кандидату
-            current = best_x.copy()
+            # perturbed
+            x1 = x + eps * d
+            self.gains = x1
+            plant.reset()
+            J1, _t1 = self._run_episode(
+                plant, sensor, noise, max_time, target_state, terminate_condition
+            )
 
-            # простое условие останова — если улучшение мало
-            if it > 5 and abs(avg_J - best_J) < 1e-6:
+            grad_dir = (J1 - J0) / eps
+            x = x - alpha * grad_dir * d
+
+            # baseline считаем достаточно представительным для best
+            if J0 < best_J:
+                best_J = float(J0)
+                best_x = x.copy()
+
+            print(
+                f"[IFT it {it:04d}] J0={J0:10.6f} J1={J1:10.6f} best={best_J:10.6f} "
+                f"Kp={x[0]:.4f} Ki={x[1]:.4f} Kd={x[2]:.4f} "
+                f"Kx={x[3]:.4f} Kdx={x[4]:.4f}"
+            )
+
+            if abs(J1 - J0) < 1e-12:
                 break
 
-        # Применить лучшие найденные параметры
         self.gains = best_x
         return {"x": best_x, "fun": best_J, "success": True}
 
@@ -143,15 +167,14 @@ class PIDController(Controller):
 
     def _run_episode(
         self,
-        plant_config: PlantConfig,
-        sensor_config: SensorConfig,
+        plant: ObjectOfControl,
+        sensor: SensorBlock,
         noise: NoiseForce,
         max_time: float,
         target_state: MeasuredState,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
     ) -> tuple[float, float]:
-        plant = ObjectOfControl(plant_config)
-        sensor = SensorBlock(sensor_config)
+
 
         dt_control = self._dt
 

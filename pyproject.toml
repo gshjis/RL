@@ -20,6 +20,8 @@ gui = {path = "packages/simulation/GUI", develop = true}
 numba = "^0.65.1"
 ffmpeg = "^1.4"
 pybind11 = "^3.0.4"
+profiling = {path = "profiling", develop = true}
+reinforce = {path = "packages/controllers/REINFORCE", develop = true}
 
 [[tool.poetry.source]]
 name = "pytorch-cpu"
