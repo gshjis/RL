@@ -1,8 +1,11 @@
-import numpy as np
-from numba import njit
-from numpy.typing import NDArray
+from .datatypes import NoiseForce, PlantConfig, State
 
-from .datatypes import MeasuredState, NoiseForce, PlantConfig, State
+# Optional C++ backend (pybind11). If unavailable (e.g. no built extension), fall back.
+try:
+    # The CMake build outputs co_cpp.so into packages/simulation/CO/.
+    from . import co_cpp as _co_cpp  # type: ignore
+except Exception:  # pragma: no cover
+    _co_cpp = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -164,6 +167,9 @@ class ObjectOfControl:
         else:
             self._backlash = None
 
+        # C++ backend state (gap position)
+        self._cpp_backlash_gap_pos: float = 0.0
+
     # ──────────────────────────────────────────────────────────────────────
     # Свойства
     # ──────────────────────────────────────────────────────────────────────
@@ -196,25 +202,6 @@ class ObjectOfControl:
     # Вычислительное ядро — уравнения Лагранжа
     # ──────────────────────────────────────────────────────────────────────
 
-    def _compute_lagrange_equations(self, F_total: float) -> State:
-        if self._single_mode:
-            self._q.theta2 = 0.0
-            self._dq.theta2 = 0.0
-        
-        params = np.array([
-            self._M, self._m1, self._m2, self._l1, self._l2,
-            self._L1, self._L2, self._J1, self._J2, self._g,
-            self._b_c, self._b_1, self._b_2
-        ])
-        return _compute_ddq_numba(self._q, self._dq, F_total, params, self._single_mode)
-
-    def _rk4_step(self, F_total: float, dt: float) -> None:
-        params = np.array([
-            self._M, self._m1, self._m2, self._l1, self._l2,
-            self._L1, self._L2, self._J1, self._J2, self._g,
-            self._b_c, self._b_1, self._b_2
-        ])
-        self._q, self._dq = _rk4_step_numba(self._q, self._dq, F_total, dt, params, self._single_mode).split()
 
     # ──────────────────────────────────────────────────────────────────────
     # Публичный API
@@ -243,16 +230,62 @@ class ObjectOfControl:
         dt_physics : float
             Шаг интегрирования физики (с).
         """
-        if self._backslash_mode and self._backlash is not None:
-            F_real = self._backlash.update(F_ideal, self._dq.x, self._dt)
+        if _co_cpp is None:
+            raise RuntimeError(
+                "C++ backend (co_cpp) is not available. Rebuild the pybind11 module or keep the Python fallback enabled."
+            )
+
+        noise_cpp = _co_cpp.NoiseForce(float(F_noise.mean), float(F_noise.std))
+
+        if self._backslash_mode:
+            backlash_alpha = self._backlash.alpha if self._backlash is not None else 0.0
+            backlash_m_mot = self._backlash._m_mot if self._backlash is not None else 1.0
         else:
-            F_real = F_ideal
+            backlash_alpha = 0.0
+            backlash_m_mot = 1.0
 
-        F_total = F_real + F_noise.get_force()
-        self._rk4_step(F_total, self._dt)
+        params = _co_cpp.PlantParams()
+        params.M = self._M
+        params.m1 = self._m1
+        params.m2 = self._m2
+        params.l1 = self._l1
+        params.l2 = self._l2
+        params.L1 = self._L1
+        params.L2 = self._L2
+        params.J1 = self._J1
+        params.J2 = self._J2
+        params.g = self._g
+        params.b_c = self._b_c
+        params.b_1 = self._b_1
+        params.b_2 = self._b_2
 
-    def compute_lagrange_equations(self, F_total: float) -> State:
-        return self._compute_lagrange_equations(F_total)
+        q_cpp = _co_cpp.State3()
+        q_cpp.x = self._q.x
+        q_cpp.theta1 = self._q.theta1
+        q_cpp.theta2 = self._q.theta2
+
+        dq_cpp = _co_cpp.StateDot3()
+        dq_cpp.x_dot = self._dq.x
+        dq_cpp.theta1_dot = self._dq.theta1
+        dq_cpp.theta2_dot = self._dq.theta2
+
+        q_cpp, dq_cpp = _co_cpp.rk4_step(
+            q_cpp,
+            dq_cpp,
+            float(F_ideal),
+            noise_cpp,
+            float(self._dt),
+            params,
+            bool(self._backslash_mode),
+            bool(self._single_mode),
+            float(backlash_alpha),
+            float(backlash_m_mot),
+            self._cpp_backlash_gap_pos,
+        )
+
+        self._q = State(q_cpp.x, q_cpp.theta1, q_cpp.theta2)
+        self._dq = State(dq_cpp.x_dot, dq_cpp.theta1_dot, dq_cpp.theta2_dot)
+        return
 
     def get_clean_state(self) -> tuple[State, State]:
         """
@@ -265,79 +298,3 @@ class ObjectOfControl:
             Кортеж ``(q, dq)``.
         """
         return (self._q, self._dq)
-
-# @njit(cache=True)
-def _compute_ddq_numba(
-    q: State,
-    dq: State,
-    F_total: float,
-    params: NDArray[np.float64],
-    single_mode: bool,
-) -> State:
-    x, th1, th2 = q
-    dx, dth1, dth2 = dq
-    M, m1, m2, l1, l2, L1, L2, J1, J2, g, b_c, b_1, b_2 = params
-
-    c1, s1 = np.cos(th1), np.sin(th1)
-    c12, s12 = np.cos(th1 + th2), np.sin(th1 + th2)
-    c2, s2 = np.cos(th2), np.sin(th2)
-
-    A = m1 * L1 + m2 * l1
-    B = m2 * L2
-
-    M11 = M + m1 + m2
-    M12 = A * c1 + B * c12
-    M13 = B * c12
-    M22 = J1 + m1 * L1**2 + J2 + m2 * (l1**2 + L2**2 + 2.0 * l1 * L2 * c2)
-    M23 = J2 + m2 * L2**2 + m2 * l1 * L2 * c2
-    M33 = J2 + m2 * L2**2
-
-    K = A * dth1 * s1 + B * (dth1 + dth2) * s12
-    C12, C13 = -K, -B * (dth1 + dth2) * s12
-    C22 = -m2 * l1 * L2 * s2 * dth2
-    C23 = -m2 * l1 * L2 * s2 * (dth1 + dth2)
-    C32 = m2 * l1 * L2 * s2 * dth1
-
-    G2 = -A * g * s1 - B * g * s12
-    G3 = -B * g * s12
-
-    rhs1 = (F_total - b_c * dx) - C12 * dth1 - C13 * dth2
-    rhs2 = (-b_1 * dth1) - C22 * dth1 - C23 * dth2 - G2
-    rhs3 = (-b_2 * dth2) - C32 * dth1 - G3
-
-    if single_mode:
-        det = M11 * M22 - M12 * M12
-        if abs(det) > 1e-15:
-            ddx = (rhs1 * M22 - M12 * rhs2) / det
-            dth1_2 = (M11 * rhs2 - M12 * rhs1) / det
-            return State(ddx, dth1_2, 0.0)
-            
-        return State(0.0, 0.0, 0.0)
-
-    M_mat = np.array([[M11, M12, M13], [M12, M22, M23], [M13, M23, M33]])
-    t = np.linalg.solve(M_mat, np.array([rhs1, rhs2, rhs3]))
-    return State(t[0], t[1], t[2])
-
-# @njit(cache=True)
-def _rk4_step_numba(
-    q: State,
-    dq: State,
-    F_total: float,
-    dt: float,
-    params: NDArray[np.float64],
-    single_mode: bool,
-) -> MeasuredState:
-    def get_dot(q_in: State, dq_in: State) -> MeasuredState:
-        ddq = _compute_ddq_numba(q_in, dq_in, F_total, params, single_mode)
-        res = np.empty(6, dtype=np.float64)
-        res = MeasuredState.from_state_and_dot(dq_in, ddq)
-        return res
-
-    s = MeasuredState.from_state_and_dot(q, dq)
-    k1 = get_dot(q, dq)
-    k2 = get_dot(q + 0.5 * dt * k1.split()[0], dq + 0.5 * dt * k1.split()[1])
-    k3 = get_dot(q + 0.5 * dt * k2.split()[0], dq + 0.5 * dt * k2.split()[0])
-    k4 = get_dot(q + dt * k3.split()[0], dq + dt *  k3.split()[1])
-
-    s_next = s + (k1 + k2 *2.0 + k3 * 2.0  + k4) * (dt / 6.0)
-    return s_next

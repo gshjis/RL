@@ -954,6 +954,20 @@ tests = ["check-manifest", "coverage (>=7.4.2)", "defusedxml", "markdown2", "ole
 xmp = ["defusedxml"]
 
 [[package]]
+name = "pybind11"
+version = "3.0.4"
+description = "Seamless operability between C++11 and Python"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "pybind11-3.0.4-py3-none-any.whl", hash = "sha256:961720ee652da51d531b7b2451a6bd2bc042b0106e6d9baa48ecb7d58034ce63"},
+    {file = "pybind11-3.0.4.tar.gz", hash = "sha256:3286b59c8a774b9ee650169302dd5a4eedc30a8617905a0560dd8ee44775130c"},
+]
+
+[package.extras]
+global = ["pybind11-global (==3.0.4)"]
+
+[[package]]
 name = "pygame"
 version = "2.6.1"
 description = "Python Game Development"
@@ -1276,4 +1290,4 @@ files = [
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "8d3dec355789d3fa13287f9e1da228005c9a4bbe0d420e24be7d284cdf6c656d"
+content-hash = "3d2ab023f2db16a6c3440f2e3573f98f4ab1ab24fc3235d275de63d23386bfa9"
