@@ -43,6 +43,7 @@ PLANT_CONFIG = PlantConfig(
     backslash_mode=False,        # люфт выключен
     init_q=State(0.0, np.pi, 0.0),   # маятник вверху
     init_dq=State(0.0, 0.0, 0.0),
+    dt=0.0005
 )
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -77,7 +78,7 @@ controller.set_motor_inertia(time_constant=0.05)
 # controller.train(
 #     PLANT_CONFIG, 
 #     SENSOR_CONFIG, 
-#     NoiseForce(value=0.05), 
+#     NoiseForce(mean=0.05, std=0.01), 
 #     target_state=MeasuredState(0, np.pi, 0)
 # )
 # Инициализация объекта управления

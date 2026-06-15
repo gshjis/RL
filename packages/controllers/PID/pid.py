@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-
+import packages.controllers.PID.cost_functions as cost_f
 import numpy as np
 from numpy.typing import NDArray
 
@@ -14,6 +14,8 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorBlock,
     SensorConfig,
+    clock_cycle
+    
 )
 
 
@@ -76,7 +78,6 @@ class PIDController(Controller):
         sensor_config: SensorConfig,
         noise: NoiseForce,
         *,
-        alpha: float = 1.0,
         max_time: float = 10.0,
         method_options: dict[str, Any] | None = None,
         target_state: MeasuredState,
@@ -108,7 +109,7 @@ class PIDController(Controller):
             for i in range(pop_size):
                 self.gains = candidates[i]
                 J, t = self._run_episode(
-                    plant_config, sensor_config, noise, alpha, max_time, target_state, terminate_condition
+                    plant_config, sensor_config, noise, max_time, target_state, terminate_condition
                 )
                 scores[i] = J
                 times[i] = t
@@ -145,7 +146,6 @@ class PIDController(Controller):
         plant_config: PlantConfig,
         sensor_config: SensorConfig,
         noise: NoiseForce,
-        alpha: float,
         max_time: float,
         target_state: MeasuredState,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
@@ -154,37 +154,18 @@ class PIDController(Controller):
         sensor = SensorBlock(sensor_config)
 
         dt_control = self._dt
-        dt_physics = 0.0005
-        steps_per_control = int(dt_control / dt_physics)
 
         max_steps = int(max_time / dt_control)
-        J = 0.0
         step = 0
 
         self.reset()
-
+        F_raw = 0.0
+        J = 0.0
         for step in range(max_steps):
-            measured = sensor.get_telemetry(plant.q, plant.dq)
 
-            # проверка терминального состояния (пользовательская или дефолтная)
-            terminated = False
-            if terminate_condition is not None:
-                terminated = bool(terminate_condition(plant))
-            else:
-                if abs(measured.theta1 - np.pi) > np.radians(15.0) or abs(measured.x) > 4:
-                    terminated = True
-
-            if terminated:
-                J += (max_steps - step) * 4.0
+            J_val, F_raw = clock_cycle(self, plant, sensor, noise, F_raw, target_state, cost_f.J)
+            if terminate_condition is not None and terminate_condition(plant):
                 break
-
-            F_raw = self.compute_control(measured, target_state)
-
-            for _ in range(steps_per_control):
-                plant.update_physics(F_raw, noise, dt_physics)
-            
-            th = plant.q[1]
-            x_pos = plant.q[0]
-            J += ((th - target_state.theta1) ** 2 + alpha * x_pos ** 2) * dt_control
+            J += J_val
 
         return (J, step*dt_control)

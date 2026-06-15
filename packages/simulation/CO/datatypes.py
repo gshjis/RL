@@ -283,6 +283,8 @@ class PlantConfig:
     init_q: State = field(default_factory=lambda: State(0.0, np.pi, 0.0))
     init_dq: State = field(default_factory=lambda: State(0.0, 0.0, 0.0))
 
+    dt: float = 0.0005
+
     def to_dict(self) -> dict:
         """Преобразовать в плоский словарь для ``ObjectOfControl.__init__``."""
         return {
@@ -305,6 +307,7 @@ class PlantConfig:
             "backlash_m_mot": self.backlash_m_mot,
             "init_q": list(self.init_q),
             "init_dq": list(self.init_dq),
+            "dt": self.dt
         }
 
 

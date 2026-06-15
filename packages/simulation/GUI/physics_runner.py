@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Callable
-
 from packages.simulation.CO import ObjectOfControl, NoiseForce
 
 
@@ -18,5 +16,5 @@ class PhysicsRunner:
 
     def step(self, force: float, noise: NoiseForce, dt: float, steps: int = 1) -> None:
         for _ in range(max(1, steps)):
-            self.plant.update_physics(force, noise, dt)
+            self.plant.update_physics(force, noise)
 

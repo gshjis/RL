@@ -10,12 +10,14 @@ from .datatypes import (
 from .engine import MotorInertia
 from .pendulum import BacklashModel, ObjectOfControl
 from .sensor import NoiseGenerator, SensorBlock
+from .run import clock_cycle
 
 __all__ = [
     # controller
     "Controller",
     "Differentiator",
     "SignalFilter",
+    "clock_cycle",
     # datatypes
     "State",
     "MeasuredState",

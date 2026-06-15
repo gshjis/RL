@@ -157,6 +157,7 @@ class ObjectOfControl:
         self._q: State = config.init_q
         self._dq: State = config.init_dq
 
+        self._dt = config.dt
         # ── Модель люфта ──────────────────────────────────────────────
         if self._backslash_mode:
             self._backlash = BacklashModel(config.backlash_alpha, config.backlash_m_mot)
@@ -220,7 +221,7 @@ class ObjectOfControl:
     # ──────────────────────────────────────────────────────────────────────
 
     def update_physics(
-        self, F_ideal: float, F_noise: NoiseForce, dt_physics: float
+        self, F_ideal: float, F_noise: NoiseForce
     ) -> None:
         """
         Главный шаг интегрирования физики ОУ.
@@ -243,12 +244,12 @@ class ObjectOfControl:
             Шаг интегрирования физики (с).
         """
         if self._backslash_mode and self._backlash is not None:
-            F_real = self._backlash.update(F_ideal, self._dq.x, dt_physics)
+            F_real = self._backlash.update(F_ideal, self._dq.x, self._dt)
         else:
             F_real = F_ideal
 
         F_total = F_real + F_noise.get_force()
-        self._rk4_step(F_total, dt_physics)
+        self._rk4_step(F_total, self._dt)
 
     def compute_lagrange_equations(self, F_total: float) -> State:
         return self._compute_lagrange_equations(F_total)

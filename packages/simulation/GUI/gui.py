@@ -294,7 +294,7 @@ class PendulumViewer:
             # ── Физика ─────────────────────────────────────────────────
             if not self._terminated:
                 for _ in range(SUBTICKS):
-                    self._plant.update_physics(F, self._noise, PHYSICS_DT)
+                    self._plant.update_physics(F, self._noise)
 
                 # Проверка терминального состояния
                 if self._terminate_condition is not None and self._terminate_condition(self._plant):
