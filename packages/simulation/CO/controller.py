@@ -7,8 +7,6 @@ from numpy.typing import NDArray
 
 from .datatypes import (
     ControllerConfig,
-    MeasuredState,
-    State,
 )
 from packages.simulation.CO.engine import MotorInertia
 
@@ -49,7 +47,7 @@ class Differentiator:
 
     # ── Основной метод ────────────────────────────────────────────────────
 
-    def calculate_velocity(self, positions: State) -> State:
+    def calculate_velocity(self, positions: np.ndarray) -> np.ndarray:
         """
         Вычислить скорость по текущему вектору координат.
 
@@ -63,17 +61,12 @@ class Differentiator:
         State
             Скорости ``(ẋ, θ̇₁, θ̇₂)``.
         """
-        pos = np.array(
-            [positions.x, positions.theta1, positions.theta2],
-            dtype=np.float64,
-        )
-
         if self._prev_positions is None:
-            self._prev_positions = pos.copy()
-            return State()
+            self._prev_positions = positions.copy()
+            return np.zeros_like(positions)
 
         # Сырая производная (backward difference)
-        raw_vel = (pos - self._prev_positions) / self._dt
+        raw_vel = (positions - self._prev_positions) / self._dt
 
         # EMA-сглаживание
         if self._filtered_velocity is None:
@@ -84,12 +77,8 @@ class Differentiator:
                 + self._alpha * raw_vel
             )
 
-        self._prev_positions = pos.copy()
-        return State(
-            x=self._filtered_velocity[0],
-            theta1=self._filtered_velocity[1],
-            theta2=self._filtered_velocity[2],
-        )
+        self._prev_positions = positions.copy()
+        return self._filtered_velocity
 
     # ── Сброс ─────────────────────────────────────────────────────────────
 
@@ -126,7 +115,7 @@ class SignalFilter:
 
     # ── Основной метод ────────────────────────────────────────────────────
 
-    def filter_signal(self, measurement: MeasuredState) -> MeasuredState:
+    def filter_signal(self, measurement: np.ndarray) -> np.ndarray:
         """
         Пропустить измерение через ФНЧ.
 
@@ -140,34 +129,16 @@ class SignalFilter:
         MeasuredState
             Сглаженный вектор состояния.
         """
-        meas = np.array(
-            [
-                measurement.x,
-                measurement.theta1,
-                measurement.theta2,
-                measurement.x_dot,
-                measurement.theta1_dot,
-                measurement.theta2_dot,
-            ],
-            dtype=np.float64,
-        )
 
         if self._filtered is None:
-            self._filtered = meas.copy()
+            self._filtered = measurement.copy()
         else:
             self._filtered = (
                 (1.0 - self._alpha) * self._filtered
-                + self._alpha * meas
+                + self._alpha * measurement
             )
 
-        return MeasuredState(
-            x=self._filtered[0],
-            theta1=self._filtered[1],
-            theta2=self._filtered[2],
-            x_dot=self._filtered[3],
-            theta1_dot=self._filtered[4],
-            theta2_dot=self._filtered[5],
-        )
+        return self._filtered
 
     # ── Сброс ─────────────────────────────────────────────────────────────
 
@@ -270,8 +241,7 @@ class Controller(ABC):
         return self._signal_filter
 
     # ── Шаблонный метод ───────────────────────────────────────────────────
-
-    def compute_control(self, measured_state: MeasuredState, target_state:MeasuredState) -> float:
+    def compute_control(self, measured_state: np.ndarray, target_state:np.ndarray) -> float:
         """
         Основной рабочий метод (Template Method).
 
@@ -297,32 +267,15 @@ class Controller(ABC):
         float
             Идеальная управляющая сила ``F_ideal`` (Н).
         """
-        # ── 1. Координаты ──────────────────────────────────────────────
-        ms = State(
-            x=measured_state.x,
-            theta1=measured_state.theta1,
-            theta2=measured_state.theta2
-        )
 
         # ── 2. Скорости ────────────────────────────────────────────────
         if self._has_velocity_sensors:
-            velocities = State(
-                x=measured_state.x_dot,
-                theta1=measured_state.theta1_dot,
-                theta2=measured_state.theta2_dot,
-            )
+            velocities = measured_state[3:]
         else:
-            velocities = self._differentiator.calculate_velocity(ms)
+            velocities = self._differentiator.calculate_velocity(measured_state[:3])
 
         # ── 3. Фильтрация ──────────────────────────────────────────────
-        full = MeasuredState(
-            x=ms.x,
-            theta1=ms.theta1,
-            theta2=ms.theta2,
-            x_dot=velocities.x,
-            theta1_dot=velocities.theta1,
-            theta2_dot=velocities.theta2,
-        )
+        full = np.concat([measured_state[:3], velocities])
         s_clean = self._signal_filter.filter_signal(full)
 
         # ── 4. Закон управления (абстрактный) ──────────────────────────
@@ -361,7 +314,7 @@ class Controller(ABC):
     # ── Абстрактный метод (закон управления) ──────────────────────────────
 
     @abstractmethod
-    def get_action(self, s_clean: MeasuredState, target_state:MeasuredState) -> float:
+    def get_action(self, s_clean: np.ndarray, target_state:np.ndarray) -> float:
         """
         Абстрактный метод вычисления управляющего воздействия.
 

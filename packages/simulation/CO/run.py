@@ -1,8 +1,9 @@
-from .datatypes import MeasuredState, NoiseForce
+from .datatypes import NoiseForce
 from .pendulum import ObjectOfControl
 from .sensor import SensorBlock
 from .controller import Controller
 from typing import Callable
+import numpy as np
 
 
 def clock_cycle(
@@ -11,8 +12,8 @@ def clock_cycle(
     sensor: SensorBlock,
     noise: NoiseForce,
     old_F: float,
-    target_state: MeasuredState,
-    J: Callable[[MeasuredState, MeasuredState], float],
+    target_state: np.ndarray,
+    J: Callable[[np.ndarray, np.ndarray], float],
 ) -> tuple[float, float]:
     """Выполнить один такт управления (control-tick) и вернуть значение целевой функции.
 

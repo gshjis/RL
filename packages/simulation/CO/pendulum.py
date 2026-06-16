@@ -1,9 +1,9 @@
-from .datatypes import MeasuredState, NoiseForce, PlantConfig, State
-
+from packages.simulation.CO.datatypes import NoiseForce, PlantConfig
+import numpy as np
 # Optional C++ backend (pybind11). If unavailable (e.g. no built extension), fall back.
 try:
     # The CMake build outputs co_cpp.so into packages/simulation/CO/.
-    from . import co_cpp as _co_cpp  # type: ignore
+    from packages.simulation.CO import co_cpp as _co_cpp  # type: ignore
 except Exception:  # pragma: no cover
     _co_cpp = None
 
@@ -158,11 +158,11 @@ class ObjectOfControl:
 
         # ── Вектор состояния ──────────────────────────────────────────
         # Начальное состояние (для reset)
-        self._q_init: State = config.init_q
-        self._dq_init: State = config.init_dq
+        self._q_init: np.ndarray = config.init_q
+        self._dq_init: np.ndarray = config.init_dq
 
-        self._q: State = self._q_init
-        self._dq: State = self._dq_init
+        self._q: np.ndarray = self._q_init
+        self._dq: np.ndarray = self._dq_init
 
         self._dt = config.dt
         # ── Модель люфта ──────────────────────────────────────────────
@@ -204,12 +204,12 @@ class ObjectOfControl:
     # ──────────────────────────────────────────────────────────────────────
 
     @property
-    def q(self) -> State:
+    def q(self) -> np.ndarray:
         """Вектор обобщённых координат ``[x, θ₁, θ₂]``."""
         return self._q.copy()
 
     @property
-    def dq(self) -> State:
+    def dq(self) -> np.ndarray:
         """Вектор обобщённых скоростей ``[ẋ, θ̇₁, θ̇₂]``."""
         return self._dq.copy()
 
@@ -277,13 +277,13 @@ class ObjectOfControl:
         q_cpp = self._cpp_q
         dq_cpp = self._cpp_dq
 
-        q_cpp.x = self._q.x
-        q_cpp.theta1 = self._q.theta1
-        q_cpp.theta2 = self._q.theta2
+        q_cpp.x = self._q[0]
+        q_cpp.theta1 = self._q[1]
+        q_cpp.theta2 = self._q[2]
 
-        dq_cpp.x_dot = self._dq.x
-        dq_cpp.theta1_dot = self._dq.theta1
-        dq_cpp.theta2_dot = self._dq.theta2
+        dq_cpp.x_dot = self._dq[0]
+        dq_cpp.theta1_dot = self._dq[1]
+        dq_cpp.theta2_dot = self._dq[2]
 
         q_cpp, dq_cpp = _co_cpp.rk4_step(
             q_cpp,
@@ -299,8 +299,8 @@ class ObjectOfControl:
             self._cpp_backlash_gap_pos,
         )
 
-        self._q = State(q_cpp.x, q_cpp.theta1, q_cpp.theta2)
-        self._dq = State(dq_cpp.x_dot, dq_cpp.theta1_dot, dq_cpp.theta2_dot)
+        self._q = np.array([q_cpp.x, q_cpp.theta1, q_cpp.theta2])
+        self._dq = np.array([dq_cpp.x_dot, dq_cpp.theta1_dot, dq_cpp.theta2_dot])
         return
 
     def reset(self) -> None:
@@ -318,9 +318,9 @@ class ObjectOfControl:
             return
 
         # Fallback: обнуляем скорости, координаты оставляем как есть.
-        self._dq = State(0.0, 0.0, 0.0)
+        self._dq = np.array([0.0, 0.0, 0.0])
 
-    def get_clean_state(self) -> tuple[State, State]:
+    def get_clean_state(self) -> tuple[np.ndarray, np.ndarray]:
         """
         Вернуть абсолютно чистые (неискажённые шумами датчиков)
         координаты и скорости системы.

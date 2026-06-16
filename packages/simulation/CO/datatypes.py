@@ -4,66 +4,6 @@ from dataclasses import dataclass, field
 import random
 import numpy as np
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Векторы состояния
-# ═══════════════════════════════════════════════════════════════════════════
-
-@dataclass
-class State:
-    """
-    Вектор обобщённых координат ОУ.
-
-    Attributes
-    ----------
-    x : float
-        Положение тележки (м).
-    theta1 : float
-        Угол первого звена от вертикали (рад).
-    theta2 : float
-        Угол второго звена относительно продолжения первого (рад).
-    """
-
-    x: float = 0.0
-    theta1: float = 0.0
-    theta2: float = 0.0
-
-    def copy(self) -> State:
-        """Сделать копию вектора состояния.
-
-        Возвращает новый экземпляр :class:`State` с теми же значениями.
-        """
-        return State(
-            x=self.x,
-            theta1=self.theta1,
-            theta2=self.theta2,
-        )
-
-    def __iter__(self):
-        # Поддержка неявного преобразования в списки вида list(State(...))
-        # используется в конфигурационных методах.
-        yield self.x
-        yield self.theta1
-        yield self.theta2
-
-    def __mul__(self, k: float) -> State:
-        """Умножить состояние на число ``k``."""
-        return State(
-            x=self.x * k,
-            theta1=self.theta1 * k,
-            theta2=self.theta2 * k,
-        )
-
-    def __rmul__(self, k: float) -> State:
-        return self.__mul__(k)
-
-    def __add__(self, other: State) -> State:
-        """Покомпонентное сложение двух [`State`]."""
-        return State(
-            x=self.x + other.x,
-            theta1=self.theta1 + other.theta1,
-            theta2=self.theta2 + other.theta2,
-        )
-
 @dataclass
 class NoiseForce:
     """
@@ -88,126 +28,6 @@ class NoiseForce:
         if self.std == 0.0:
             return self.mean
         return random.gauss(self.mean, self.std)
-
-@dataclass
-class MeasuredState:
-    """
-    Вектор измеренного (зашумлённого и/или квантованного) состояния
-    системы, поступающий с датчиков или после дифференцирования.
-
-    Может быть собран из :class:`State` и :class:`StateDot` с помощью
-    класс-метода :meth:`from_state_and_dot`.
-
-    Attributes
-    ----------
-    x : float
-        Положение тележки (м).
-    theta1 : float
-        Угол первого звена (рад).
-    theta2 : float
-        Угол второго звена (рад).
-    x_dot : float
-        Скорость тележки (м/с).
-    theta1_dot : float
-        Угловая скорость первого звена (рад/с).
-    theta2_dot : float
-        Угловая скорость второго звена (рад/с).
-    """
-
-    x: float = 0.0
-    theta1: float = 0.0
-    theta2: float = 0.0
-    x_dot: float = 0.0
-    theta1_dot: float = 0.0
-    theta2_dot: float = 0.0
-
-    @classmethod
-    def from_state_and_dot(
-        cls, state: State, state_dot: State
-    ) -> MeasuredState:
-        """
-        Собрать ``MeasuredState`` из вектора обобщённых координат
-        и вектора обобщённых скоростей.
-
-        Parameters
-        ----------
-        state : State
-            Обобщённые координаты ``(x, θ₁, θ₂)``.
-        state_dot : StateDot
-            Обобщённые скорости ``(ẋ, θ̇₁, θ̇₂)``.
-
-        Returns
-        -------
-        MeasuredState
-            Полный вектор измеренного состояния.
-        """
-        return cls(
-            x=state.x,
-            theta1=state.theta1,
-            theta2=state.theta2,
-            x_dot=state_dot.x,
-            theta1_dot=state_dot.theta1,
-            theta2_dot=state_dot.theta2,
-        )
-
-    def __add__(self, other: MeasuredState) -> MeasuredState:
-        """Покомпонентное сложение двух MeasuredState."""
-        return MeasuredState(
-            x=self.x + other.x,
-            theta1=self.theta1 + other.theta1,
-            theta2=self.theta2 + other.theta2,
-            x_dot=self.x_dot + other.x_dot,
-            theta1_dot=self.theta1_dot + other.theta1_dot,
-            theta2_dot=self.theta2_dot + other.theta2_dot,
-        )
-
-    def __sub__(self, other: MeasuredState) -> MeasuredState:
-        """Покомпонентное вычитание двух MeasuredState (self - other)."""
-        return MeasuredState(
-            x=self.x - other.x,
-            theta1=self.theta1 - other.theta1,
-            theta2=self.theta2 - other.theta2,
-            x_dot=self.x_dot - other.x_dot,
-            theta1_dot=self.theta1_dot - other.theta1_dot,
-            theta2_dot=self.theta2_dot - other.theta2_dot,
-        )
-
-    def split(self) -> tuple[State, State]:
-        """Разделить измеренное состояние на координаты и скорости.
-
-        Returns
-        -------
-        tuple[State, StateDot]
-            ``(state, state_dot)``.
-        """
-        state = State(x=self.x, theta1=self.theta1, theta2=self.theta2)
-        state_dot = State(
-            x=self.x_dot,
-            theta1=self.theta1_dot,
-            theta2=self.theta2_dot,
-        )
-        return state, state_dot
-    
-    def __iter__(self):
-        # Поддержка неявного преобразования в списки.
-        yield self.x
-        yield self.theta1
-        yield self.theta2
-        yield self.x_dot
-        yield self.theta1_dot
-        yield self.theta2_dot
-
-    def __mul__(self, k: float) -> MeasuredState:
-        """Умножить состояние на число ``k``."""
-        return MeasuredState(
-            x=self.x * k,
-            theta1=self.theta1 * k,
-            theta2=self.theta2 * k,
-            x_dot=self.x_dot * k,
-            theta1_dot=self.theta1_dot * k,
-            theta2_dot=self.theta2_dot * k,            
-        )
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Конфигурации
@@ -280,8 +100,8 @@ class PlantConfig:
     backlash_alpha: float = 0.0
     backlash_m_mot: float = 0.0
 
-    init_q: State = field(default_factory=lambda: State(0.0, np.pi, 0.0))
-    init_dq: State = field(default_factory=lambda: State(0.0, 0.0, 0.0))
+    init_q: np.ndarray = field(default_factory=lambda: np.array([0.0, np.pi, 0.0]))
+    init_dq: np.ndarray = field(default_factory=lambda: np.array([0.0, 0.0, 0.0]))
 
     dt: float = 0.0005
 

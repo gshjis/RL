@@ -1,43 +1,6 @@
 import numpy as np
-from numpy.typing import NDArray
+from packages.simulation.CO.datatypes import SensorConfig
 
-from .datatypes import MeasuredState, SensorConfig, State
-
-
-class NoiseGenerator:
-    """
-    Генератор гауссовского белого шума для имитации измерительных помех.
-
-    Parameters
-    ----------
-    std : NDArray[np.float64]
-        Вектор среднеквадратичных отклонений (СКО) для каждого канала.
-    seed : int | None
-        Опциональный seed для воспроизводимости шума.
-    """
-
-    def __init__(
-        self, std: NDArray[np.float64], seed: int | None = None
-    ) -> None:
-        self._std = np.asarray(std, dtype=np.float64)
-        self._rng = np.random.default_rng(seed)
-
-    @property
-    def std(self) -> NDArray[np.float64]:
-        """Вектор СКО шумовых каналов."""
-        return self._std
-
-    def generate(self) -> NDArray[np.float64]:
-        """
-        Сгенерировать вектор белого шума.
-
-        Returns
-        -------
-        NDArray[np.float64]
-            Вектор нормально распределённых случайных величин
-            с нулевым мат. ожиданием и заданными СКО.
-        """
-        return self._rng.normal(0.0, self._std)
 
 
 class SensorBlock:
@@ -67,21 +30,13 @@ class SensorBlock:
         self._angle_step_1: float = 2.0 * np.pi / self._encoder_res_1
         self._angle_step_2: float = 2.0 * np.pi / self._encoder_res_2
         self._cart_step: float = self._cart_res
+        self._rng = np.random.default_rng(config.seed)
 
         noise_std_q = np.asarray(config.noise_std_q, dtype=np.float64)
         noise_std_dq = np.asarray(config.noise_std_dq, dtype=np.float64)
-        full_std = np.concatenate([noise_std_q, noise_std_dq])
+        self._std = np.concat([noise_std_q, noise_std_dq])
+        
 
-        self._noise_generator = NoiseGenerator(full_std, seed=config.seed)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Свойства
-    # ──────────────────────────────────────────────────────────────────────
-
-    @property
-    def noise_generator(self) -> NoiseGenerator:
-        """Внутренний генератор белого шума."""
-        return self._noise_generator
 
     # ──────────────────────────────────────────────────────────────────────
     # Квантование
@@ -128,56 +83,39 @@ class SensorBlock:
     # ──────────────────────────────────────────────────────────────────────
 
     def get_telemetry(
-        self, raw_q: State, raw_dq: State
-    ) -> MeasuredState:
+        self, raw_q: np.ndarray, raw_dq: np.ndarray
+    ) -> np.ndarray:
         """
         Преобразовать чистые координаты ОУ в зашумлённый квантованный
         вектор телеметрии.
-
-        Алгоритм:
-
-        1. Квантование каждой координаты из ``raw_q`` (углы — энкодер,
-           положение тележки — оптическая линейка).
-        2. Генерация вектора измерительного шума через ``noise_generator``.
-        3. Суммирование шума с квантованными значениями.
-        4. Скорости не квантуются (предполагается, что измеряются аппаратно
-           тахогенераторами или аналоговыми датчиками).
-
-        Parameters
-        ----------
-        raw_q : NDArray[np.float64]
-            Чистый вектор координат из ОУ ``[x, θ₁, θ₂]``.
-        raw_dq : NDArray[np.float64]
-            Чистый вектор скоростей из ОУ ``[ẋ, θ̇₁, θ̇₂]``.
-
-        Returns
-        -------
-        MeasuredState
-            Вектор измеренного состояния.
         """
-        q = np.asarray(list(raw_q), dtype=np.float64)
-        dq = np.asarray(list(raw_dq), dtype=np.float64)
-
-        # 1. Квантование координат
-        x_q = self._apply_quantization(q[0], self._cart_step, "cart")
-        th1_q = self._apply_quantization(q[1], self._encoder_res_1, "encoder")
-        th2_q = self._apply_quantization(q[2], self._encoder_res_2, "encoder")
-
-        # 2. Квантованный вектор + скорости (скорости не квантуются)
-        quantized = np.array(
-            [x_q, th1_q, th2_q, dq[0], dq[1], dq[2]],
-            dtype=np.float64,
-        )
-
-        # 3. Наложение измерительного шума
-        noise = self._noise_generator.generate()
-        measured_state = quantized + noise
-
-        return MeasuredState(
-            x=measured_state[0],
-            theta1=measured_state[1],
-            theta2=measured_state[2],
-            x_dot=measured_state[3],
-            theta1_dot=measured_state[4],
-            theta2_dot=measured_state[5],
-        )
+        # raw_q и raw_dq УЖЕ numpy массивы! Не конвертируем!
+        q = raw_q
+        dq = raw_dq
+        
+        # Квантование inline (без вызова функций)
+        cart_step = self._cart_step
+        enc1 = self._encoder_res_1
+        enc2 = self._encoder_res_2
+        
+        # Используем astype(int) вместо round - БЫСТРЕЕ!
+        x_q = (q[0] // cart_step) * cart_step
+        th1_q = (q[1] // enc1) * enc1
+        th2_q = (q[2] // enc2) * enc2
+        
+        # Создаем массив напрямую из уже существующих значений
+        # Используем view где возможно
+        measured = np.empty(6, dtype=np.float64)
+        measured[0] = x_q
+        measured[1] = th1_q
+        measured[2] = th2_q
+        measured[3] = dq[0]
+        measured[4] = dq[1]
+        measured[5] = dq[2]
+        
+        # Добавляем шум (in-place для экономии памяти)
+        noise = self._rng.normal(0.0, self._std)
+        measured += noise
+        
+        # Возвращаем без создания промежуточных объектов
+        return measured

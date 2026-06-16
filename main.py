@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from packages.simulation.CO.datatypes import MeasuredState, State
 from packages.simulation.CO import (
     ControllerConfig,
     NoiseForce,
@@ -41,8 +40,8 @@ PLANT_CONFIG = PlantConfig(
     b_2=0.00,
     single_pendulum_mode=True,   # двухзвенный режим
     backslash_mode=False,        # люфт выключен
-    init_q=State(3.0, np.pi, 0.0),   # маятник вверху
-    init_dq=State(0.0, 0.0, 0.0),
+    init_q=np.array([3.0, np.pi, 0.0]),   # маятник вверху
+    init_dq=np.array([0.0, 0.0, 0.0]),
     dt=0.0005
 )
 
@@ -101,8 +100,8 @@ window = PendulumViewer(
     plant,
     SENSOR_CONFIG,
     NoiseForce(mean=0.05, std=0.02),
-    controller=controller,
+    # controller=controller,
     # terminate_condition=terminate_condition,
-    target_state=MeasuredState(0, np.pi, 0),
+    target_state=np.array([0, np.pi, 0]),
 )
 window.use()

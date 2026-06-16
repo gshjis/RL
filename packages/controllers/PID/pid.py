@@ -4,19 +4,15 @@ from typing import Any, Callable, Optional
 import cost_functions as cost_f
 import numpy as np
 from numpy.typing import NDArray
-from dataclasses import dataclass
-from typing import Optional
 from packages.simulation.CO import (
     Controller,
     ControllerConfig,
-    MeasuredState,
-    NoiseForce,
     ObjectOfControl,
     PlantConfig,
     SensorBlock,
     SensorConfig,
-    clock_cycle
-    
+    clock_cycle,
+    NoiseForce
 )
 
 def terminate_condition(state:ObjectOfControl) -> bool:
@@ -53,18 +49,17 @@ class PIDController(Controller):
 
     # ── Закон управления ──────────────────────────────────────────────────
 
-    def get_action(self, s_clean: MeasuredState, target_state:MeasuredState) -> float:
-
+    def get_action(self, s_clean: np.ndarray, target_state:np.ndarray) -> float:
         error = target_state - s_clean
 
-        self._integral += error.theta1 * self._dt
+        self._integral += error[1] * self._dt
 
         F = (
-            self._Kp * error.theta1
+            self._Kp * error[1]
             + self._Ki * self._integral
-            + self._Kd * error.theta1_dot
-            + self._Kx * error.x
-            + self._Kdx * error.x_dot
+            + self._Kd * error[4]
+            + self._Kx * error[0]
+            + self._Kdx * error[3]
         )
         return F
 
@@ -86,7 +81,7 @@ class PIDController(Controller):
         sensor: SensorBlock,
         noise: NoiseForce,
         max_time: float,
-        target_state: MeasuredState,
+        target_state: np.ndarray,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
     ) -> tuple[float, float]:
 
@@ -117,7 +112,7 @@ class PIDController(Controller):
         noise: NoiseForce,
         optimizer,
         logger:Optional[int],
-        target_state: MeasuredState|Callable,
+        target_state: np.ndarray|Callable,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
         episode_max_time: float = 150.0,
         *,

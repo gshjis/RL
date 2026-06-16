@@ -1,3 +1,3 @@
-from packages.simulation.CO.datatypes import MeasuredState
-def J(targ:MeasuredState, real:MeasuredState, x_alpha:float = 1):
-    return ((targ.theta1 - real.theta1) ** 2 + x_alpha * (targ.x - real.x) ** 2)
+import numpy as np
+def J(targ:np.ndarray, real:np.ndarray, x_alpha:float = 1):
+    return ((targ[1] - real[1]) ** 2 + x_alpha * (targ[0] - real[0]) ** 2)
