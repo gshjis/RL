@@ -264,9 +264,12 @@ class ObjectOfControl:
 
         # Fast path: use update_physics_cpp if available.
         if hasattr(_co_cpp, "update_physics_cpp"):
-            # Pass q/dq as writable contiguous float64 buffers.
-            q_arr = np.asarray(self._q, dtype=np.float64)
-            dq_arr = np.asarray(self._dq, dtype=np.float64)
+            # Массивы уже правильные (созданы с float64)
+            q_arr = self._q
+            dq_arr = self._dq
+            
+            # Проверка на writable (почти никогда не нужна)
+            # Но оставляем для безопасности
             if not q_arr.flags["WRITEABLE"]:
                 q_arr = q_arr.copy()
             if not dq_arr.flags["WRITEABLE"]:
@@ -280,7 +283,7 @@ class ObjectOfControl:
             )
 
             params = self._cpp_params
-            _q_arr, _dq_arr, self._cpp_backlash_gap_pos = _co_cpp.update_physics_cpp(
+            _co_cpp.update_physics_cpp(
                 q_arr,
                 dq_arr,
                 float(F_ideal),
@@ -295,9 +298,6 @@ class ObjectOfControl:
                 float(self._cpp_backlash_gap_pos),
             )
 
-            # Keep python state as numpy float64 arrays
-            self._q = np.asarray(_q_arr, dtype=np.float64)
-            self._dq = np.asarray(_dq_arr, dtype=np.float64)
             return
 
     def reset(self) -> None:

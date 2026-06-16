@@ -40,7 +40,7 @@ PLANT_CONFIG = PlantConfig(
     b_2=0.00,
     single_pendulum_mode=True,   # двухзвенный режим
     backslash_mode=False,        # люфт выключен
-    init_q=np.array([3.0, np.pi, 0.0]),   # маятник вверху
+    init_q=np.array([0.0, 0, 0.0]),   # маятник вверху
     init_dq=np.array([0.0, 0.0, 0.0]),
     dt=0.005
 )
