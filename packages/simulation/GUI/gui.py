@@ -297,6 +297,7 @@ class PendulumViewer:
                     self._plant.update_physics(F, self._noise)
 
                 # Проверка терминального состояния
+
                 if self._terminate_condition is not None and self._terminate_condition(self._plant):
                     self._terminated = True
                     # Зафиксировать прошедшее время при остановке

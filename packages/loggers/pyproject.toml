@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "reinforce"
+name = "loggers"
 version = "0.1.0"
 description = ""
 authors = ["gshjis <ilya.togan@gmail.com>"]

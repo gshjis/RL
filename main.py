@@ -17,7 +17,7 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorConfig,
 )
-from packages.controllers.REINFORCE import ReinforceController
+from packages.controllers.PID import PIDController, terminate_condition
 from packages.simulation.GUI import PendulumViewer
 
 
@@ -41,7 +41,7 @@ PLANT_CONFIG = PlantConfig(
     b_2=0.00,
     single_pendulum_mode=True,   # двухзвенный режим
     backslash_mode=False,        # люфт выключен
-    init_q=State(0.0, np.pi, 0.0),   # маятник вверху
+    init_q=State(3.0, np.pi, 0.0),   # маятник вверху
     init_dq=State(0.0, 0.0, 0.0),
     dt=0.0005
 )
@@ -68,19 +68,28 @@ CONTROLLER_CONFIG = ControllerConfig(
     has_velocity_sensors=False,  
     differentiator_cutoff_hz=20.0, # фильтрация дифференциатора
     filter_cutoff_hz=10.0,         # фильтрация сигнала
-    gains=[107.5716, 41.8424, 23.9279, -16.8122, -13.21]   # [Kp, Ki, Kd, Kx, Kdx]
+    gains=  [118.99, 0.23, 80.08, -5.00, -13.87]  # [Kp, Ki, Kd, Kx, Kdx]
 )
 
 # Инициализация контроллера
-controller = ReinforceController(CONTROLLER_CONFIG)
+controller = PIDController(CONTROLLER_CONFIG)
 # Добавляем инерционность двигателя (tau = 0.05 с)
 controller.set_motor_inertia(time_constant=0.05)
-controller.train(
-    PLANT_CONFIG,
-    SENSOR_CONFIG,
-    NoiseForce(mean=0.05, std=0.01),
-    target_state=MeasuredState(0, np.pi, 0),
-)
+# controller.train(
+#     PLANT_CONFIG, 
+#     SENSOR_CONFIG, 
+#     NoiseForce(mean=0.05, std=0.01),
+#     target_state=MeasuredState(0, np.pi, 0),
+#     terminate_condition=terminate_condition,
+#     max_time=40.0,
+#     method_options={
+#         "generations": 15,
+#         "population_size": 100,
+#         "mutation_sigma": 0.15,
+#         "mutation_prob": 0.4,
+#         "early_stop_threshold": 10.0,  # остановиться при J < 10
+#     }
+# )
 # Инициализация объекта управления
 plant = ObjectOfControl(PLANT_CONFIG)
 
@@ -93,7 +102,7 @@ window = PendulumViewer(
     SENSOR_CONFIG,
     NoiseForce(mean=0.05, std=0.02),
     controller=controller,
-    # terminate_condition=lambda p: (abs(p.q[1] - np.pi) > np.radians(45.0)) or (abs(p.q[0]) > 5.0),
+    # terminate_condition=terminate_condition,
     target_state=MeasuredState(0, np.pi, 0),
 )
 window.use()
