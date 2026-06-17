@@ -64,12 +64,12 @@ SENSOR_CONFIG = SensorConfig(
 # ═══════════════════════════════════════════════════════════════════════════
 
 CONTROLLER_CONFIG = ControllerConfig(
-    dt=0.005,                    # такт УУ 200 Гц
-    max_force=30.0,              # макс. сила мотора, Н
+    dt=0.05,                    # такт УУ 200 Гц
+    max_force=10.0,              # макс. сила мотора, Н
     has_velocity_sensors=False,  
     differentiator_cutoff_hz=20.0, # фильтрация дифференциатора
     filter_cutoff_hz=10.0,         # фильтрация сигнала
-    gains=   [25.27, 20, 3.99, -1, -0.1] # [Kp, Ki, Kd, Kx, Kdx]
+    gains=   [38.39, 10, 10.53, -2, -1.875] # [Kp, Ki, Kd, Kx, Kdx]
 )
 
 # Инициализация контроллера

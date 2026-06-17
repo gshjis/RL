@@ -18,7 +18,7 @@ from packages.simulation.CO import (
 
 def terminate_condition(state:ObjectOfControl) -> bool:
     if abs(state.q[1] - np.pi) > np.radians(40):
-        return True
+        return False
     return False
 
 
@@ -54,6 +54,9 @@ class PIDController(Controller):
         error = target_state - s_clean
 
         self._integral += error[1] * self._dt
+        if self._integral > 4:
+            print("reset")
+            self.reset()
 
         F = (
             self._Kp * error[1]

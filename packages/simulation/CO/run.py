@@ -51,7 +51,7 @@ def clock_cycle(
     # Общее число шагов физики в одном тикe управления.
     steps_per_control = int(dt_control / dt_physics)
     # Доля времени, в течение которой управление не пересчитывается (задержка).
-    freeze_ratio = 0.75
+    freeze_ratio = 0.3*np.random.random() + 0.2
     count_time = int(steps_per_control * freeze_ratio)
     remaining_steps = steps_per_control - count_time
 

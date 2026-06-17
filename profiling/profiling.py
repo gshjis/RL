@@ -44,7 +44,7 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Берём конфигурации “по умолчанию”, чтобы скрипт работал сразу.
-    controller_cfg = ControllerConfig(dt=0.005, gains=[10.0, 1.0, 2.0, 1.0, 2.0])
+    controller_cfg = ControllerConfig(dt=0.05, gains=[10.0, 1.0, 2.0, 1.0, 2.0])
     pid = PIDController(controller_cfg)
     pid.set_motor_inertia(0.05)
 
