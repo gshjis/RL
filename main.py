@@ -14,8 +14,6 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorConfig,
 )
-from packages.simulation.GUI import PendulumViewer
-
 from packages.controllers.REINFORCE.reinforce import Reinforce
 from packages.controllers.REINFORCE.mode_config import ReinforceNetworkConfig
 
@@ -90,11 +88,3 @@ if __name__ == "__main__":
     # ── Визуализация обученного агента ─────────────────────────────────
     plant = ObjectOfControl(PLANT_CONFIG)
 
-    window = PendulumViewer(
-        plant,
-        SENSOR_CONFIG,
-        NOISE,
-        controller=agent,
-        target_state=TARGET,
-    )
-    window.use()
