@@ -3226,6 +3226,19 @@ files = [
 ]
 
 [[package]]
+name = "reinforce"
+version = "0.1.0"
+description = ""
+optional = false
+python-versions = "^3.12"
+files = []
+develop = true
+
+[package.source]
+type = "directory"
+url = "packages/controllers/REINFORCE"
+
+[[package]]
 name = "requests"
 version = "2.34.2"
 description = "Python HTTP for Humans."
@@ -3894,4 +3907,4 @@ type = ["pytest-mypy (>=1.0.1)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "a0c6746deddfb01c7a9a22b3492519ab3cb87ea7c8b2285b07f9cfa651b38327"
+content-hash = "b80e486cf353f7d650a879169b9425a3a1f8989f98ebb4ea59d46f8d2ae4aedf"

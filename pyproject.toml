@@ -21,6 +21,7 @@ pybind11 = "^3.0.4"
 profiling = {path = "profiling", develop = true}
 scikit-optimize = "^0.10.2"
 loggers = {path = "packages/loggers", develop = true}
+reinforce = {path = "packages/controllers/REINFORCE", develop = true}
 
 [[tool.poetry.source]]
 name = "pytorch-cpu"

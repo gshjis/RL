@@ -54,9 +54,6 @@ class PIDController(Controller):
         error = target_state - s_clean
 
         self._integral += error[1] * self._dt
-        if self._integral > 4:
-            print("reset")
-            self.reset()
 
         F = (
             self._Kp * error[1]
