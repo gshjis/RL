@@ -16,6 +16,7 @@ from packages.simulation.CO import (
 from typing import Callable, Optional, Any
 from loggers import Logger
 import copy
+from pathlib import Path
 
 
 def default_terminate_condition(state: ObjectOfControl) -> bool:
@@ -114,6 +115,18 @@ class Reinforce(Controller):
         
         return float(action.item() * self._max_force)
 
+    def save(self, path: str | Path) -> None:
+        """Сохранить веса нейросети в файл."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(self.net.state_dict(), str(path))
+
+    def load(self, path: str | Path) -> None:
+        """Загрузить веса нейросети из файла."""
+        path = Path(path)
+        self.net.load_state_dict(torch.load(str(path), weights_only=True))
+        self.net.eval()
+
     def reset(self) -> None:
         super().reset()
         self._log_probs = []
@@ -136,6 +149,10 @@ class Reinforce(Controller):
         gamma = 0.99
         dt_control = self._dt
         max_steps = int(episode_max_time / dt_control)
+
+        ckpt_dir = Path("checkpoints") / self.name.lower()
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
+        save_interval = max(1, episodes // 20)
 
         for episode in range(episodes):
             # Создаём свежий экземпляр маятника
@@ -187,6 +204,11 @@ class Reinforce(Controller):
             total_return = sum(rewards)
             if episode % 10 == 0:
                 print(f"Episode {episode:4d} | Return: {total_return:8.2f} | Loss: {loss.item():8.4f} | Steps: {len(rewards):3d}")
+
+            # Периодическое сохранение чекпоинта
+            if episode % save_interval == 0 or episode == episodes - 1:
+                ckpt_path = ckpt_dir / f"episode_{episode:05d}.pt"
+                self.save(ckpt_path)
 
             if logger is not None and episode % 100 == 0:
                 logger.log_metrics({
