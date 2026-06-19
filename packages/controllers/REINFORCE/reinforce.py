@@ -162,7 +162,7 @@ class Reinforce(Controller):
             rewards: list[float] = []
             F_raw = 0.0
 
-            for _ in range(max_steps):
+            for step in range(max_steps):
                 J_, F_raw = clock_cycle(
                     self, plant, sensor, noise, F_raw, target_state,
                     lambda t, m: 0.0  # отключаем старую награду
@@ -173,7 +173,7 @@ class Reinforce(Controller):
 
                 # Если маятник упал — завершаем эпизод
                 if default_terminate_condition(plant):
-                    rewards[-1] = -100.0  # Штраф за падение
+                    rewards[-1] = -1.0 * (max_steps - step)
                     break
 
             # Вычисляем discounted returns

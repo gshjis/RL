@@ -56,9 +56,9 @@ SENSOR_CONFIG = SensorConfig(
 NET_CONFIG = ReinforceNetworkConfig(
     state_dim=12,              # s_clean (6) + target_state (6)
     action_dim=1,              # одно управляющее воздействие — сила F
-    hidden_layers=[64,64],
+    hidden_layers=[128, 128],
     activation="relu",
-    learning_rate=1e-4,
+    learning_rate=3e-4,
     output_activation="tanh",
 )
 
@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
     NOISE = NoiseForce(mean=0.05, std=0.01)
     TARGET = np.array([0.0, np.pi, 0.0, 0.0, 0.0, 0.0])
-    agent.set_motor_inertia(time_constant=0.01)
+    agent.set_motor_inertia(time_constant=0.1)
     agent.train(
         plant_config=PLANT_CONFIG,
         sensor_config=SENSOR_CONFIG,

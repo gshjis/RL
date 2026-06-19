@@ -14,3 +14,5 @@ packages/simulation/CO/cpp/CMakeCache.txt
 packages/simulation/CO/co_cpp.*
 packages/simulation/CO/cpp/*.so
 packages/simulation/CO/cpp/*.pyd
+
+checkpoints
