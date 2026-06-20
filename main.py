@@ -14,6 +14,7 @@ from packages.simulation.CO import (
     PlantConfig,
     SensorConfig,
 )
+
 from packages.controllers.REINFORCE.reinforce import Reinforce
 from packages.controllers.REINFORCE.mode_config import ReinforceNetworkConfig
 
@@ -56,10 +57,10 @@ SENSOR_CONFIG = SensorConfig(
 NET_CONFIG = ReinforceNetworkConfig(
     state_dim=12,              # s_clean (6) + target_state (6)
     action_dim=1,              # одно управляющее воздействие — сила F
-    hidden_layers=[128, 128],
-    activation="relu",
-    learning_rate=3e-4,
-    output_activation="tanh",
+    hidden_layers=[128,128, 128],
+    activation="gelu",
+    learning_rate=1e-4,
+    output_activation="gelu",
 )
 
 CONTROLLER_CONFIG = ControllerConfig(
@@ -73,7 +74,7 @@ CONTROLLER_CONFIG = ControllerConfig(
 if __name__ == "__main__":
     agent = Reinforce(NET_CONFIG, CONTROLLER_CONFIG)
 
-    NOISE = NoiseForce(mean=0.05, std=0.01)
+    NOISE = NoiseForce(mean=0.05, std=0.1)
     TARGET = np.array([0.0, np.pi, 0.0, 0.0, 0.0, 0.0])
     agent.set_motor_inertia(time_constant=0.1)
     agent.train(
@@ -82,9 +83,11 @@ if __name__ == "__main__":
         noise=NOISE,
         target_state=TARGET,
         episode_max_time=30.0,
-        episodes=20000,
     )
+    # agent = Reinforce.from_pretrained(
+    #     path="/home/gshjis/Python_projects/RL/checkpoints/reinforce/episode_04000.pt",
+    #     config=NET_CONFIG,
+    #     controller_config=CONTROLLER_CONFIG,
+    # )
 
-    # ── Визуализация обученного агента ─────────────────────────────────
-    plant = ObjectOfControl(PLANT_CONFIG)
 

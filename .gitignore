@@ -16,3 +16,4 @@ packages/simulation/CO/cpp/*.so
 packages/simulation/CO/cpp/*.pyd
 
 checkpoints
+reinforce_models

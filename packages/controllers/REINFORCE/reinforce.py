@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from controller import Controller
 from datatypes import ControllerConfig
 from packages.controllers.REINFORCE.mode_config import ReinforceNetworkConfig
@@ -74,7 +76,7 @@ class ReinforceNet(nn.Module):
         elif self.output_activation_name == "sigmoid":
             mu = torch.sigmoid(mu)
         
-        log_std = torch.clamp(self.log_std_layer(x), -5.0, 2.0)
+        log_std = self.log_std_layer(x)
         return mu, log_std
 
 
@@ -113,13 +115,25 @@ class Reinforce(Controller):
         log_prob = dist.log_prob(action).sum(dim=-1)
         self._log_probs.append(log_prob)
         
-        return float(action.item() * self._max_force)
+        return float(action.item())*self._max_force
 
     def save(self, path: str | Path) -> None:
         """Сохранить веса нейросети в файл."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.net.state_dict(), str(path))
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        path: str | Path,
+        config: ReinforceNetworkConfig,
+        controller_config: ControllerConfig,
+    ) -> Reinforce:
+        """Создать агента с конфигурацией и сразу загрузить веса."""
+        agent = cls(config, controller_config)
+        agent.load(path)
+        return agent
 
     def load(self, path: str | Path) -> None:
         """Загрузить веса нейросети из файла."""
@@ -139,7 +153,8 @@ class Reinforce(Controller):
         target_state: np.ndarray,
         terminate_condition: Callable[[ObjectOfControl], bool] | None = None,
         episode_max_time: float = 150.0,
-        episodes: int = 1000,
+        epochs:int = 1000,
+        episodes_per_epoch: int = 100,
         logger: Optional[Logger] = None,
         *,
         method_options: dict[str, Any] | None = None,
@@ -152,68 +167,64 @@ class Reinforce(Controller):
 
         ckpt_dir = Path("checkpoints") / self.name.lower()
         ckpt_dir.mkdir(parents=True, exist_ok=True)
-        save_interval = max(1, episodes // 20)
+        save_interval = 10
 
-        for episode in range(episodes):
-            # Создаём свежий экземпляр маятника
-            plant = ObjectOfControl(copy.deepcopy(plant_config))
-            self.reset()
-
-            rewards: list[float] = []
-            F_raw = 0.0
-
-            for step in range(max_steps):
-                J_, F_raw = clock_cycle(
-                    self, plant, sensor, noise, F_raw, target_state,
-                    lambda t, m: 0.0  # отключаем старую награду
-                )
-                
-                # Новая награда: +1 за выживание
-                rewards.append(1.0)
-
-                # Если маятник упал — завершаем эпизод
-                if default_terminate_condition(plant):
-                    rewards[-1] = -1.0 * (max_steps - step)
-                    break
-
-            # Вычисляем discounted returns
-            G = 0.0
-            returns = []
-            for r in reversed(rewards):
-                G = r + gamma * G
-                returns.insert(0, G)
-
-            # Нормализация returns
-            returns_t = torch.tensor(returns, dtype=torch.float32)
-            if len(returns_t) > 1:
-                returns_t = (returns_t - returns_t.mean()) / (returns_t.std() + 1e-8)
-
-            # Вычисляем loss (максимизируем log_prob * ret)
-            loss = torch.tensor(0.0, dtype=torch.float32)
-            for log_prob, ret in zip(self._log_probs, returns_t):
-                loss = loss - log_prob * ret  # стандартный REINFORCE
-            loss = loss / max(1, len(self._log_probs))
-
-            # Оптимизация
+        for epoch in range(epochs):
             self.optimizer.zero_grad()
-            loss.backward()
+            epoch_rewards = []
+            epoch_steps = []
+            epoch_loss_val = 0.0
+
+            for episod in range(episodes_per_epoch):
+                plant = ObjectOfControl(copy.deepcopy(plant_config))
+                self.reset()
+
+                rewards: list[float] = []
+                F_raw = 0.0
+
+                for step in range(max_steps):
+                    J_, F_raw = clock_cycle(
+                        self, plant, sensor, noise, F_raw, target_state,
+                        lambda t, m: np.exp(-np.linalg.norm(t-m) * 3.0)
+                    )
+                    
+                    rewards.append(J_)
+
+                    if default_terminate_condition(plant):
+                        rewards[-1] = -10.0
+                        break
+
+                # Discounted returns
+                G = 0.0
+                returns = []
+                for r in reversed(rewards):
+                    G = r + gamma * G
+                    returns.insert(0, G)
+                epoch_rewards.append(sum(rewards))
+                epoch_steps.append(len(rewards))
+
+                # Normalise
+                returns_t = torch.tensor(returns, dtype=torch.float32)
+                if len(returns_t) > 1:
+                    returns_t = (returns_t - returns_t.mean()) / (returns_t.std() + 1e-8)
+
+                # Loss за один эпизод — плоский граф через stack
+                if self._log_probs:
+                    log_probs_t = torch.stack(self._log_probs)
+                    episode_loss = -(log_probs_t * returns_t).sum() / len(log_probs_t)
+                    episode_loss.backward()          # градиенты накапливаются в .grad
+                    epoch_loss_val += episode_loss.item()
+
+            # Один шаг оптимизатора на всю эпоху
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), max_norm=1.0)
             self.optimizer.step()
 
             # Логирование
-            total_return = sum(rewards)
-            if episode % 10 == 0:
-                print(f"Episode {episode:4d} | Return: {total_return:8.2f} | Loss: {loss.item():8.4f} | Steps: {len(rewards):3d}")
+            total_return = np.mean(np.array(epoch_rewards))
+            mean_steps = np.mean(np.array(epoch_steps))
+            print(f"Episode {epoch:4d} | Return: {total_return:8.2f} Steps: {mean_steps:3.1f}")
 
-            # Периодическое сохранение чекпоинта
-            if episode % save_interval == 0 or episode == episodes - 1:
-                ckpt_path = ckpt_dir / f"episode_{episode:05d}.pt"
-                self.save(ckpt_path)
-
-            if logger is not None and episode % 100 == 0:
-                logger.log_metrics({
-                    "episode": episode,
-                    "return": total_return,
-                    "loss": loss.item(),
-                    "steps": len(rewards)
-                })
+            # Сохранение чекпоинта с метриками в имени
+            if epoch % save_interval == 0 or epoch == epochs - 1:
+                ckpt_name = f"epoch_{epoch:04d}_return_{total_return:+.1f}_steps_{mean_steps:.0f}.pt"
+                self.save(ckpt_dir / ckpt_name)
