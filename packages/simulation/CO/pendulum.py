@@ -2,13 +2,10 @@ from packages.simulation.CO.datatypes import NoiseForce, PlantConfig
 import numpy as np
 
 # Optional C++ backend (pybind11). If unavailable (e.g. no built extension), fall back.
-# Используем абсолютный импорт, чтобы модуль корректно работал при прямом запуске
-# скриптов из репозитория (когда относительные импорты могут не резолвиться).
 try:
     from packages.simulation.CO import co_cpp as _co_cpp  # type: ignore
 except Exception:  # pragma: no cover
     _co_cpp = None
-
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -29,12 +26,24 @@ class BacklashModel:
         Ширина зазора редуктора (в линейном перемещении, м).
     m_mot : float
         Приведённая масса ротора двигателя (кг).
+
+    Notes
+    -----
+    **TODO**: Модель люфта может быть удалена в будущих версиях,
+    если задача управления не требует учёта зазора редуктора.
+    В текущей реализации ``backslash_mode`` по умолчанию ``False``.
+
+    Optimization potential:
+        - Модель не учитывает ``cart_velocity`` (параметр зарезервирован,
+          но не используется) — может быть упрощена до двух случаев.
+        - В C++ backend люфт обрабатывается отдельно, что приводит
+          к дублированию логики.
     """
 
     def __init__(self, alpha: float, m_mot: float) -> None:
-        self._alpha = float(alpha)
-        self._m_mot = float(m_mot)
-        self._half_gap = self._alpha / 2.0
+        self._alpha: float = float(alpha)
+        self._m_mot: float = float(m_mot)
+        self._half_gap: float = self._alpha / 2.0
 
         # Внутреннее состояние — текущее положение внутри зазора.
         # Диапазон: [-half_gap, +half_gap].
@@ -51,7 +60,8 @@ class BacklashModel:
     def gap_position(self) -> float:
         """
         Текущее относительное положение внутри зазора (м).
-        :math:`[-\\alpha/2, +\\alpha/2]`.
+
+        Диапазон: :math:`[-\\alpha/2, +\\alpha/2]`.
         """
         return self._gap_pos
 
@@ -75,8 +85,8 @@ class BacklashModel:
         1. Вычислить ускорение ротора относительно тележки
            :math:`a_{rel} = F_{ideal} / m_{mot}`.
         2. Обновить положение внутри зазора:
-           :math:`gap + = a_{rel} * dt`.
-        3. Если положение выходит за пределы :math:`[-alpha/2, +alpha/2]`,
+           :math:`gap += a_{rel} \\cdot dt`.
+        3. Если положение выходит за пределы :math:`[-\\alpha/2, +\\alpha/2]`,
            избыток считается силой контакта, передаваемой на тележку.
            Положение фиксируется на границе.
 
@@ -85,8 +95,8 @@ class BacklashModel:
         F_ideal : float
             Идеальное управляющее усилие (Н).
         cart_velocity : float
-            Текущая скорость тележки (м/с) — пока не используется
-            в простейшей модели (задел для вязкого трения в зазоре).
+            Текущая скорость тележки (м/с) — **зарезервировано**,
+            не используется в текущей модели.
         dt : float
             Шаг интегрирования (с).
 
@@ -113,6 +123,7 @@ class BacklashModel:
 
         return F_real
 
+
 # ═══════════════════════════════════════════════════════════════════════════
 # ObjectOfControl
 # ═══════════════════════════════════════════════════════════════════════════
@@ -122,14 +133,33 @@ class ObjectOfControl:
     Математическая модель физической части системы — тележка
     с многозвенным (одно- или двухзвенным) маятником.
 
-    Выполняет непрерывное интегрирование уравнений движения
-    методом Рунге — Кутты 4-го порядка на физическом микрошаге
-    ``dt_physics`` и инкапсулирует нелинейность привода (люфт).
-    """
+    Интегрирует уравнения движения методом Рунге — Кутты 4-го порядка
+    на физическом микрошаге ``dt_physics``. Поддерживает:
 
-    # ──────────────────────────────────────────────────────────────────────
-    # Конструктор
-    # ──────────────────────────────────────────────────────────────────────
+    - Однозвенный и двухзвенный режимы
+    - Опциональный люфт редуктора (BacklashModel)
+    - C++ backend (pybind11) для высокопроизводительных симуляций
+
+    Parameters
+    ----------
+    config : PlantConfig
+        Типизированная конфигурация физических параметров ОУ.
+
+    Notes
+    -----
+    Уравнения движения выводятся из формализма Лагранжа 2-го рода.
+
+    Optimization potential:
+        - ``_q.copy()`` и ``_dq.copy()`` в свойствах ``q`` и ``dq``
+          создают новый массив на каждом обращении; в горячем цикле
+          ``clock_cycle`` это до 5 копий на такт. Можно использовать
+          ``return self._q`` (без копии), если вызывающий код гарантирует
+          неизменность.
+        - ``_q_init`` может ссылаться на тот же массив, что и
+          ``PlantConfig.init_q`` — осторожно с мутациями.
+        - C++ backend предварительно выделяет объекты один раз,
+          что хорошо для производительности.
+    """
 
     def __init__(self, config: PlantConfig) -> None:
         """
@@ -160,19 +190,21 @@ class ObjectOfControl:
         self._backslash_mode: bool = config.backslash_mode
 
         # ── Вектор состояния ──────────────────────────────────────────
-        # Начальное состояние (для reset)
         self._q_init: np.ndarray = config.init_q
         self._dq_init: np.ndarray = config.init_dq
 
         self._q: np.ndarray = self._q_init
         self._dq: np.ndarray = self._dq_init
 
-        self._dt = config.dt
+        self._dt: float = config.dt
+
         # ── Модель люфта ──────────────────────────────────────────────
         if self._backslash_mode:
-            self._backlash = BacklashModel(config.backlash_alpha, config.backlash_m_mot)
+            self._backlash: BacklashModel | None = BacklashModel(
+                config.backlash_alpha, config.backlash_m_mot
+            )
         else:
-            self._backlash = None
+            self._backlash: BacklashModel | None = None
 
         # C++ backend state (gap position)
         self._cpp_backlash_gap_pos: float = 0.0
@@ -187,7 +219,6 @@ class ObjectOfControl:
             self._cpp_params = _co_cpp.PlantParams()
             self._cpp_q = _co_cpp.State3()
             self._cpp_dq = _co_cpp.StateDot3()
-            # Fill static params
             self._cpp_params.M = self._M
             self._cpp_params.m1 = self._m1
             self._cpp_params.m2 = self._m2
@@ -223,7 +254,7 @@ class ObjectOfControl:
 
     @property
     def single_pendulum_mode(self) -> bool:
-        """Флаг блокировки второй степени свободы."""
+        """Флаг блокировки второй степени свободы (однозвенный режим)."""
         return self._single_mode
 
     @single_pendulum_mode.setter
@@ -254,35 +285,44 @@ class ObjectOfControl:
             Идеальное управляющее усилие от УУ (Н).
         F_noise : NoiseForce
             Мгновенное значение силы внешнего возмущения.
-        dt_physics : float
-            Шаг интегрирования физики (с).
+
+        Raises
+        ------
+        RuntimeError
+            Если C++ backend (``co_cpp``) не собран и используется
+            только Python-путь, который ещё не реализован как fallback.
+
+        Notes
+        -----
+        В текущей реализации **требуется** C++ backend
+        (``co_cpp.update_physics_cpp``). Python-код RK4 не реализован.
         """
         if _co_cpp is None:
             raise RuntimeError(
-                "C++ backend (co_cpp) is not available. Rebuild the pybind11 module or keep the Python fallback enabled."
+                "C++ backend (co_cpp) is not available. "
+                "Rebuild the pybind11 module or keep the Python fallback enabled."
             )
 
-        # Fast path: use update_physics_cpp if available.
         if hasattr(_co_cpp, "update_physics_cpp"):
-            # Массивы уже правильные (созданы с float64)
             q_arr = self._q
             dq_arr = self._dq
-            
-            # Проверка на writable (почти никогда не нужна)
-            # Но оставляем для безопасности
+
             if not q_arr.flags["WRITEABLE"]:
                 q_arr = q_arr.copy()
             if not dq_arr.flags["WRITEABLE"]:
                 dq_arr = dq_arr.copy()
 
             backlash_alpha = (
-                float(self._backlash.alpha) if self._backslash_mode and self._backlash is not None else 0.0
+                float(self._backlash.alpha)
+                if self._backslash_mode and self._backlash is not None
+                else 0.0
             )
             backlash_m_mot = (
-                float(self._backlash._m_mot) if self._backslash_mode and self._backlash is not None else 1.0
+                float(self._backlash._m_mot)
+                if self._backslash_mode and self._backlash is not None
+                else 1.0
             )
 
-            params = self._cpp_params
             _co_cpp.update_physics_cpp(
                 q_arr,
                 dq_arr,
@@ -290,7 +330,7 @@ class ObjectOfControl:
                 float(F_noise.mean),
                 float(F_noise.std),
                 float(self._dt),
-                params,
+                self._cpp_params,
                 bool(self._backslash_mode),
                 bool(self._single_mode),
                 backlash_alpha,
@@ -298,17 +338,18 @@ class ObjectOfControl:
                 float(self._cpp_backlash_gap_pos),
             )
 
-            return
-
     def reset(self) -> None:
-        """Сбросить состояние модели к начальному.
-
-        Примечание
-        ----------
-        Начальные значения берутся из текущих внутренних параметров
-        (как было задано при конструировании).
         """
-        # Используем зафиксированное начальное состояние, если оно сохранено.
+        Сбросить состояние модели к начальному.
+
+        Начальные значения берутся из параметров, заданных при конструировании.
+
+        Notes
+        -----
+        Не сбрасывает ``C++ backend`` — ``_cpp_backlash_gap_pos``
+        остаётся прежним (в текущей реализации люфт не используется
+        по умолчанию, поэтому это не критично).
+        """
         if hasattr(self, "_q_init") and hasattr(self, "_dq_init"):
             self._q = self._q_init.copy()
             self._dq = self._dq_init.copy()
@@ -324,7 +365,7 @@ class ObjectOfControl:
 
         Returns
         -------
-        tuple[State, StateDot]
-            Кортеж ``(q, dq)``.
+        tuple[np.ndarray, np.ndarray]
+            Кортеж ``(q, dq)`` — координаты и скорости.
         """
         return (self._q, self._dq)

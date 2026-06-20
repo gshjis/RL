@@ -4,30 +4,44 @@ from dataclasses import dataclass, field
 import random
 import numpy as np
 
+
 @dataclass
 class NoiseForce:
     """
-    Мгновенное значение силы внешнего возмущения.
+    Мгновенное значение силы внешнего возмущения (белый шум).
 
-    Attributes
+    Parameters
     ----------
     mean : float
         Математическое ожидание внешнего возмущения (Н).
     std : float
         СКО (среднеквадратичное отклонение) внешнего возмущения (Н).
+
+    Examples
+    --------
+    >>> noise = NoiseForce(mean=0.05, std=0.02)
+    >>> force = noise.get_force()
+    >>> isinstance(force, float)
+    True
     """
 
     mean: float = 0.0
     std: float = 0.0
 
     def get_force(self) -> float:
-        """Сгенерировать случайную силу по нормальному распределению.
+        """
+        Сгенерировать случайную силу по нормальному распределению.
 
-        Используется параметры ``mean`` и ``std``.
+        Returns
+        -------
+        float
+            Случайное значение силы (Н) согласно ``mean`` и ``std``.
+            Если ``std == 0``, возвращает ``mean`` без генерации.
         """
         if self.std == 0.0:
             return self.mean
         return random.gauss(self.mean, self.std)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Конфигурации
@@ -38,7 +52,11 @@ class PlantConfig:
     """
     Конфигурация физических параметров объекта управления (тележка + маятник).
 
-    Attributes
+    Параметры модели: тележка массы :math:`M` с двухзвенным маятником
+    (массы :math:`m_1,m_2`, длины :math:`l_1,l_2`, расстояние до ЦМ :math:`L_1,L_2`,
+    моменты инерции :math:`J_1,J_2`) в поле тяжести :math:`g`.
+
+    Parameters
     ----------
     M : float
         Масса тележки (кг).
@@ -69,15 +87,26 @@ class PlantConfig:
     single_pendulum_mode : bool
         Флаг блокировки второй степени свободы (однозвенный режим).
     backslash_mode : bool
-        Флаг учёта люфта редуктора.
+        Флаг учёта люфта редуктора (TODO: может быть удалён).
     backlash_alpha : float
         Ширина зазора редуктора (м).
     backlash_m_mot : float
         Приведённая масса ротора двигателя (кг).
-    init_q : tuple[float, float, float]
+    init_q : np.ndarray
         Начальные обобщённые координаты ``(x, θ₁, θ₂)``.
-    init_dq : tuple[float, float, float]
+    init_dq : np.ndarray
         Начальные обобщённые скорости ``(ẋ, θ̇₁, θ̇₂)``.
+    dt : float
+        Шаг интегрирования физики (с).
+
+    Notes
+    -----
+    Optimization potential:
+        - ``copy()`` создаёт полную копию на каждой итерации обучения;
+          для горячего цикла можно переиспользовать экземпляр через ``reset()``
+          объекта ``ObjectOfControl``.
+        - ``to_dict()`` вызывается однократно при создании ``ObjectOfControl``,
+          не является узким местом.
     """
 
     M: float = 1.0
@@ -106,7 +135,14 @@ class PlantConfig:
     dt: float = 0.0005
 
     def to_dict(self) -> dict:
-        """Преобразовать в плоский словарь для ``ObjectOfControl.__init__``."""
+        """
+        Преобразовать в плоский словарь для ``ObjectOfControl.__init__``.
+
+        Returns
+        -------
+        dict
+            Словарь с физическими параметрами, совместимый с ``ObjectOfControl``.
+        """
         return {
             "M": self.M,
             "m1": self.m1,
@@ -131,7 +167,14 @@ class PlantConfig:
         }
 
     def copy(self) -> PlantConfig:
-        """Создать глубокую копию конфигурации."""
+        """
+        Создать глубокую копию конфигурации.
+
+        Returns
+        -------
+        PlantConfig
+            Независимая копия со своими массивами ``init_q`` / ``init_dq``.
+        """
         return PlantConfig(
             M=self.M,
             m1=self.m1,
@@ -161,7 +204,7 @@ class SensorConfig:
     """
     Конфигурация датчиков и шумов измерительной подсистемы.
 
-    Attributes
+    Parameters
     ----------
     encoder_resolution_1 : int
         Разрядность энкодера первого звена (импульсов на оборот).
@@ -169,16 +212,25 @@ class SensorConfig:
         Разрядность энкодера второго звена.
     cart_sensor_resolution : float
         Дискретность датчика положения каретки (м).
-    noise_std_q : NDArray[np.float64]
-        СКО белого шума для координат ``[x, θ₁, θ₂]``.
-    noise_std_dq : NDArray[np.float64]
-        СКО белого шума для скоростей ``[ẋ, θ̇₁, θ̇₂]``.
     noise_std_q : list[float] | tuple[float, float, float]
         СКО белого шума для координат ``[x, θ₁, θ₂]``.
     noise_std_dq : list[float] | tuple[float, float, float]
         СКО белого шума для скоростей ``[ẋ, θ̇₁, θ̇₂]``.
     seed : int | None
         Seed для генератора шума (воспроизводимость).
+        ``None`` — случайные шумы при каждом запуске.
+
+    Notes
+    -----
+    SensorBlock предвычисляет пул шумов размера ``pool_size=2_000_000``
+    при инициализации, что ускоряет симуляцию (не нужно генерировать
+    случайные числа на каждом такте).
+
+    Optimization potential:
+        - ``pool_size`` мог бы быть параметром конфигурации
+          (сейчас захардкожен в ``SensorBlock``).
+        - При ``seed=None`` каждый запуск даёт разные шумы,
+          что полезно для обучения, но мешает отладке.
     """
 
     encoder_resolution_1: int = 4096
@@ -198,7 +250,14 @@ class SensorConfig:
     seed: int | None = None
 
     def to_dict(self) -> dict:
-        """Преобразовать в плоский словарь для ``SensorBlock.__init__``."""
+        """
+        Преобразовать в плоский словарь для ``SensorBlock.__init__``.
+
+        Returns
+        -------
+        dict
+            Словарь с параметрами датчиков.
+        """
         return {
             "encoder_resolution_1": self.encoder_resolution_1,
             "encoder_resolution_2": self.encoder_resolution_2,
@@ -214,20 +273,34 @@ class ControllerConfig:
     """
     Конфигурация регулятора (Устройства управления).
 
-    Attributes
+    Определяет параметры обработки сигнала в ``Controller``:
+    такт управления, ограничение силы, настройки фильтров.
+
+    Parameters
     ----------
     dt : float
         Такт УУ (с), по умолч. 0.005 (200 Гц).
     max_force : float
         Максимальная сила мотора (Н), по умолч. 30.0.
     has_velocity_sensors : bool
-        ``True``, если скорости измеряются аппаратно.
+        ``True``, если скорости измеряются аппаратно
+        (иначе вычисляются дифференциатором).
     differentiator_cutoff_hz : float | None
         Частота среза ФНЧ дифференциатора (``None`` — без фильтрации).
     filter_cutoff_hz : float
         Частота среза ФНЧ сигнала (Гц).
     gains : list[float]
-        Начальные коэффициенты ``[Kp, Ki, Kd, Kx]`` (для PID).
+        Начальные коэффициенты ``[Kp, Ki, Kd, Kx, Kdx]`` (для PID).
+
+    Notes
+    -----
+    Ранее существовавшие поля ``action_filter_cutoff_hz`` и
+    ``action_smoothing_cutoff_hz`` удалены как избыточные
+    (см. ``compute_control`` в ``controller.py``).
+
+    Optimization potential:
+        - ``gains`` специфичен для PID; для универсальной конфигурации
+          имеет смысл вынести в отдельный ``PIDConfig``.
     """
 
     dt: float = 0.005
@@ -238,7 +311,14 @@ class ControllerConfig:
     gains: list[float] = field(default_factory=lambda: [10.0, 1.0, 2.0, 1.0])
 
     def to_dict(self) -> dict:
-        """Преобразовать в плоский словарь для ``Controller.__init__``."""
+        """
+        Преобразовать в плоский словарь для ``Controller.__init__``.
+
+        Returns
+        -------
+        dict
+            Словарь с параметрами регулятора.
+        """
         return {
             "dt": self.dt,
             "max_force": self.max_force,

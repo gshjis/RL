@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 import numpy as np
 from numpy.typing import NDArray
 
-from packages.simulation.CO.datatypes import (
+from .datatypes import (
     ControllerConfig,
 )
 from packages.simulation.CO.engine import MotorInertia
@@ -31,6 +31,19 @@ class Differentiator:
     cutoff_hz : float | None
         Частота среза ФНЧ для сглаживания скорости (Гц).
         Если ``None`` — фильтрация отключена (сырая производная).
+
+    Notes
+    -----
+    Коэффициент сглаживания :math:`\\alpha = dt / (\\tau + dt)`,
+    где :math:`\\tau = 1 / (2\\pi f_{cut})`.
+
+    Optimization potential:
+        - ``np.zeros_like()`` на первом вызове можно заменить на
+          предварительно выделенный массив нулей (экономия аллокации).
+        - ``positions.copy()`` вызывается дважды за шаг; можно
+          переиспользовать буфер, если позволить модифицировать входной массив.
+        - EMA эквивалентен ``np.lerp(self._filtered, raw_vel, self._alpha)``
+          в NumPy ≥ 1.22 (одна операция вместо трёх).
     """
 
     def __init__(self, dt: float, cutoff_hz: float | None = None) -> None:
@@ -51,15 +64,24 @@ class Differentiator:
         """
         Вычислить скорость по текущему вектору координат.
 
+        На первом вызове (нет предыдущего измерения) возвращает нулевой вектор.
+
         Parameters
         ----------
-        positions : State
-            Координаты ``(x, θ₁, θ₂)`` на текущем шаге.
+        positions : np.ndarray
+            Координаты ``(x, θ₁, θ₂)`` на текущем шаге (формат (3,)).
 
         Returns
         -------
-        State
-            Скорости ``(ẋ, θ̇₁, θ̇₂)``.
+        np.ndarray
+            Скорости ``(ẋ, θ̇₁, θ̇₂)`` (формат (3,)).
+
+        Examples
+        --------
+        >>> diff = Differentiator(dt=0.01, cutoff_hz=30.0)
+        >>> vel = diff.calculate_velocity(np.array([0.0, np.pi, 0.0]))
+        >>> vel.shape
+        (3,)
         """
         if self._prev_positions is None:
             self._prev_positions = positions.copy()
@@ -83,7 +105,11 @@ class Differentiator:
     # ── Сброс ─────────────────────────────────────────────────────────────
 
     def reset(self) -> None:
-        """Сбросить внутреннюю историю (вызывать перед каждым эпизодом)."""
+        """
+        Сбросить внутреннюю историю (вызывать перед каждым эпизодом).
+
+        После сброса следующий вызов ``calculate_velocity`` вернёт нули.
+        """
         self._prev_positions = None
         self._filtered_velocity = None
 
@@ -96,16 +122,24 @@ class SignalFilter:
     """
     Блок экспоненциального сглаживания (ФНЧ первого порядка).
 
-    Реализует фильтр :math:`y_k = (1-α)·y_{k-1} + α·u_k`
-    с коэффициентом :math:`α = dt / (τ + dt)`, где
-    :math:`τ = 1 / (2π·f_{cut})`.
+    Реализует фильтр :math:`y_k = (1-\\alpha)\\cdot y_{k-1} + \\alpha\\cdot u_k`
+    с коэффициентом :math:`\\alpha = dt / (\\tau + dt)`, где
+    :math:`\\tau = 1 / (2\\pi f_{cut})`.
 
     Parameters
     ----------
     cutoff_hz : float
-        Частота среза фильтра (Гц).
+        Частота среза фильтра (Гц). Должна быть > 0.
     dt : float
         Период дискретизации (с).
+
+    Notes
+    -----
+    Optimization potential:
+        - Аналогично ``Differentiator``: ``np.lerp`` может заменить две
+          операции умножения.
+        - При больших ``pool_size`` в ``SensorBlock`` фильтр может быть
+          избыточен — шум уже усреднён пулом предвычисленных значений.
     """
 
     def __init__(self, cutoff_hz: float, dt: float) -> None:
@@ -119,15 +153,24 @@ class SignalFilter:
         """
         Пропустить измерение через ФНЧ.
 
+        На первом вызове (нет предыдущего значения) возвращает копию входа.
+
         Parameters
         ----------
-        measurement : MeasuredState
-            Входной зашумлённый вектор состояния.
+        measurement : np.ndarray
+            Входной зашумлённый вектор состояния (формат (6,)).
 
         Returns
         -------
-        MeasuredState
-            Сглаженный вектор состояния.
+        np.ndarray
+            Сглаженный вектор состояния (формат (6,)).
+
+        Examples
+        --------
+        >>> flt = SignalFilter(cutoff_hz=50.0, dt=0.005)
+        >>> out = flt.filter_signal(np.array([0.0, np.pi, 0.0, 0.0, 0.0, 0.0]))
+        >>> out.shape
+        (6,)
         """
 
         if self._filtered is None:
@@ -143,7 +186,11 @@ class SignalFilter:
     # ── Сброс ─────────────────────────────────────────────────────────────
 
     def reset(self) -> None:
-        """Сбросить внутреннюю память фильтра."""
+        """
+        Сбросить внутреннюю память фильтра.
+
+        После сброса следующий вызов ``filter_signal`` вернёт копию входа.
+        """
         self._filtered = None
 
 
@@ -161,20 +208,46 @@ class Controller(ABC):
 
     1. Приём ``measured_state``
     2. Вычисление скоростей (дифференцирование) при отсутствии датчиков
-    3. Фильтрация всего вектора состояния
+    3. Фильтрация всего вектора состояния (ФНЧ)
     4. Вызов абстрактного :meth:`get_action` (закон управления)
-    5. Ограничение по насыщению привода
-    6. Сохранение и возврат ``F_ideal``
+    5. Клиппинг силы в диапазон ``[-max_force, +max_force]``
+    6. Модель инерционности мотора (опционально)
+    7. Сохранение и возврат ``F_ideal``
+
+    Parameters
+    ----------
+    config : ControllerConfig
+        Типизированная конфигурация регулятора (такт, макс. сила, фильтры).
+
+    Notes
+    -----
+    Чтобы добавить новый закон управления, унаследуйтесь от ``Controller``
+    и реализуйте :meth:`get_action`:
+
+    >>> class MyController(Controller):
+    ...     def get_action(self, s_clean, target_state) -> float:
+    ...         return -s_clean[1]  # пропорционально углу
+
+    Optimization potential:
+        - ``np.concat`` в ``compute_control`` создаёт новый массив на
+          каждом такте; можно переиспользовать предварительно выделенный
+          буфер размером 6.
+        - ``SignalFilter`` и ``Differentiator`` можно объединить в один
+          проход (сейчас два последовательных EMA).
     """
 
     def __init__(self, config: ControllerConfig) -> None:
         """
         Parameters
         ----------
-        config : dict | ControllerConfig
-            Конфигурация. ``ControllerConfig`` — типизированный датакласс
-            из ``datatypes.py``. ``dict`` — плоский словарь с теми же
-            ключами для обратной совместимости.
+        config : ControllerConfig
+            Конфигурация регулятора. Поддерживается только типизированный
+            датакласс (словари больше не принимаются).
+
+        Raises
+        ------
+        AttributeError
+            Если в ``config`` отсутствуют необходимые поля.
         """
         # ── Извлечение параметров ─────────────────────────────────────
 
@@ -184,10 +257,10 @@ class Controller(ABC):
         _diff_cutoff = config.differentiator_cutoff_hz
         _filter_cutoff = config.filter_cutoff_hz
 
-        self.name:str
-        self._dt = _dt
-        self._max_force = _max_force
-        self._has_velocity_sensors = _has_vel
+        self.name: str
+        self._dt: float = _dt
+        self._max_force: float = _max_force
+        self._has_velocity_sensors: bool = _has_vel
 
         # Компоненты обработки сигналов
         self._differentiator = Differentiator(
@@ -201,29 +274,19 @@ class Controller(ABC):
         # Память
         self._last_control_action: float = 0.0
         self._motor_inertia: MotorInertia | None = None
-        # Блоки сглаживания для управляющего сигнала
-        # action_filter — сглаживание на этапе ДО ограничения (для подавления импульсов)
-        # action_smooth — сглаживание итогового (обрязанного) сигнала перед выдачей
-        _action_filter_cutoff = getattr(config, "action_filter_cutoff_hz", None)
-        _action_smooth_cutoff = getattr(config, "action_smoothing_cutoff_hz", None)
-        if _action_filter_cutoff is not None and _action_filter_cutoff > 0.0:
-            tau_af = 1.0 / (2.0 * np.pi * float(_action_filter_cutoff))
-            self._alpha_action_filter = float(self._dt) / (tau_af + float(self._dt))
-        else:
-            self._alpha_action_filter = 1.0
-        if _action_smooth_cutoff is not None and _action_smooth_cutoff > 0.0:
-            tau_as = 1.0 / (2.0 * np.pi * float(_action_smooth_cutoff))
-            self._alpha_action_smooth = float(self._dt) / (tau_as + float(self._dt))
-        else:
-            self._alpha_action_smooth = 1.0
-        self._action_filtered: float | None = None
-        self._action_smoothed: float | None = None
 
     def set_motor_inertia(self, time_constant: float) -> None:
-        """Установить модель инерционности двигателя."""
+        """
+        Установить модель инерционности двигателя.
+
+        Parameters
+        ----------
+        time_constant : float
+            Постоянная времени апериодического звена (с).
+            ``None`` или ``0.0`` отключает инерционность.
+        """
         self._motor_inertia = MotorInertia(time_constant)
 
-    # ── Свойства ──────────────────────────────────────────────────────────
 
     @property
     def last_control_action(self) -> float:
@@ -232,94 +295,93 @@ class Controller(ABC):
 
     @property
     def differentiator(self) -> Differentiator:
-        """Блок численного дифференцирования."""
+        """Блок численного дифференцирования скоростей."""
         return self._differentiator
 
     @property
     def signal_filter(self) -> SignalFilter:
-        """Блок фильтрации сигнала."""
+        """Блок ФНЧ для сглаживания измерений."""
         return self._signal_filter
 
-    # ── Шаблонный метод ───────────────────────────────────────────────────
-    def compute_control(self, measured_state: np.ndarray, target_state:np.ndarray) -> float:
+    def compute_control(
+        self, measured_state: np.ndarray, target_state: np.ndarray
+    ) -> float:
         """
         Основной рабочий метод (Template Method).
 
         Pipeline:
-        1. Извлечь координаты из measured_state.
-        2. Вычесть из measured_state, target_state (error).
-        3. Если датчиков скоростей нет — вычислить скорости через
-           ``differentiator.calculate_velocity()``, иначе взять
-           значения из ``measured_state``.
-        4. Собрать полный ``MeasuredState`` и пропустить через
-           ``signal_filter.filter_signal()``.
-        5. Вызвать абстрактный :meth:`get_action(e_clean)`.
-        6. Ограничить силу диапазоном ``[-max_force, +max_force]``.
+        1. Извлечь координаты из ``measured_state``.
+        2. Если датчиков скоростей нет — вычислить скорости через
+           ``differentiator.calculate_velocity()``.
+        3. Собрать полный вектор ``(x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂)`` и пропустить
+           через ``signal_filter.filter_signal()``.
+        4. Вызвать абстрактный :meth:`get_action(s_clean, target_state)`.
+        5. Ограничить силу диапазоном ``[-max_force, +max_force]``.
+        6. Применить модель инерционности мотора (если задана).
         7. Сохранить в ``last_control_action`` и вернуть.
 
         Parameters
         ----------
-        measured_state : MeasuredState
-            Зашумлённый и/или квантованный вектор состояния с датчиков.
+        measured_state : np.ndarray
+            Зашумлённый и/или квантованный вектор состояния с датчиков
+            ``(x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂)``.
+        target_state : np.ndarray
+            Целевой вектор состояния ``(x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂)``.
 
         Returns
         -------
         float
-            Идеальная управляющая сила ``F_ideal`` (Н).
+            Реальная управляющая сила, приложенная к тележке (Н).
+
+        Examples
+        --------
+        >>> from datatypes import ControllerConfig
+        >>> cfg = ControllerConfig(dt=0.005, max_force=30.0)
+        >>> ctrl = MyController(cfg)  # doctest: +SKIP
+        >>> meas = np.array([0.0, 3.14, 0.0, 0.0, 0.0, 0.0])
+        >>> target = np.zeros(6)
+        >>> force = ctrl.compute_control(meas, target)  # doctest: +SKIP
         """
 
-        # ── 2. Скорости ────────────────────────────────────────────────
+        # ── 1. Скорости ────────────────────────────────────────────────
         if self._has_velocity_sensors:
             velocities = measured_state[3:]
         else:
-            velocities = self._differentiator.calculate_velocity(measured_state[:3])
+            velocities = self._differentiator.calculate_velocity(
+                measured_state[:3]
+            )
 
-        # ── 3. Фильтрация ──────────────────────────────────────────────
+        # ── 2. Фильтрация ──────────────────────────────────────────────
         full = np.concat([measured_state[:3], velocities])
         s_clean = self._signal_filter.filter_signal(full)
-        # ── 4. Закон управления (абстрактный) ──────────────────────────
+
+        # ── 3. Закон управления (абстрактный) ──────────────────────────
         F_raw = self.get_action(s_clean, target_state)
 
-        # ── 5. Сглаживание сформированного сигнала до ограничения (action_filter)
-        if self._action_filtered is None:
-            self._action_filtered = float(F_raw)
-        else:
-            self._action_filtered = (
-                (1.0 - self._alpha_action_filter) * self._action_filtered
-                + self._alpha_action_filter * float(F_raw)
-            )
-
-        # ── 6. Насыщение (clipping)
+        # ── 4. Насыщение (clipping) ────────────────────────────────────
         max_f = self._max_force
-        F = self._action_filtered
-        if F > max_f:
+        if F_raw > max_f:
             F_clipped = max_f
-        elif F < -max_f:
+        elif F_raw < -max_f:
             F_clipped = -max_f
         else:
-            F_clipped = F
-        # ── 7. Сглаживание итогового (обрезанного) сигнала перед выдачей (action_smooth)
-        if self._action_smoothed is None:
-            self._action_smoothed = F_clipped
-        else:
-            self._action_smoothed = (
-                (1.0 - self._alpha_action_smooth) * self._action_smoothed
-                + self._alpha_action_smooth * F_clipped
-            )
+            F_clipped = F_raw
 
-        # ── 8. Модель инерционности мотора (если задана) применяется к сглаженному сигналу
-        output_F = self._action_smoothed
+        # ── 5. Модель инерционности мотора (опционально) ──────────────
+        output_F: float = F_clipped
         if self._motor_inertia is not None:
-            output_F = self._motor_inertia.update(output_F, self._dt)
+            output_F = self._motor_inertia.update(F_clipped, self._dt)
 
-        # ── 9. Сохранение и возврат
+        # ── 6. Сохранение и возврат ────────────────────────────────────
         self._last_control_action = float(output_F)
         return self._last_control_action
 
     # ── Абстрактный метод (закон управления) ──────────────────────────────
 
     @abstractmethod
-    def get_action(self, s_clean: np.ndarray, target_state:np.ndarray) -> float|np.ndarray:
+    def get_action(
+        self, s_clean: np.ndarray, target_state: np.ndarray
+    ) -> float:
         """
         Абстрактный метод вычисления управляющего воздействия.
 
@@ -328,13 +390,21 @@ class Controller(ABC):
 
         Parameters
         ----------
-        s_clean : MeasuredState
-            Отфильтрованный вектор состояния ``(x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂)``.
+        s_clean : np.ndarray
+            Отфильтрованный вектор состояния
+            ``(x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂)``.
+        target_state : np.ndarray
+            Целевой вектор состояния.
 
         Returns
         -------
         float
             Идеальная сила (Н) **до** насыщения.
+
+        Notes
+        -----
+        Допускается возвращать значение за пределами ``[-max_force, +max_force]`` —
+        ограничение будет применено в ``compute_control``.
         """
         ...
 
@@ -342,10 +412,14 @@ class Controller(ABC):
 
     def reset(self) -> None:
         """
-        Сбросить внутреннюю память фильтра и дифференциатора.
+        Сбросить внутреннюю память фильтра, дифференциатора и мотора.
 
         Вызывать в начале каждого нового эпизода, чтобы переходные
         процессы предыдущего запуска не влияли на старт.
+
+        Examples
+        --------
+        >>> ctrl.reset()
         """
         self._differentiator.reset()
         self._signal_filter.reset()

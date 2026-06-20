@@ -15,48 +15,79 @@ def clock_cycle(
     target_state: np.ndarray,
     J: Callable[[np.ndarray, np.ndarray], float],
 ) -> tuple[float, float]:
-    """Выполнить один такт управления (control-tick) и вернуть значение целевой функции.
+    """
+    Выполнить один такт управления (control-tick) и вернуть значение
+    целевой функции и новую управляющую силу.
 
-    Логика включает искусственную задержку вычисления управляющего воздействия:
-    управление пересчитывается только после того, как физика отработала ~75%
-    от длительности control-tick, используя предыдущее значение силы.
+    Логика включает **искусственную задержку** вычисления управляющего
+    воздействия: управление пересчитывается только после того, как физика
+    отработала ~20–50% от длительности control-tick, используя предыдущее
+    значение силы. Это имитирует вычислительную задержку реального УУ.
+
+    Алгоритм:
+
+    1. Вычислить число микрошагов физики в одном control-tick.
+    2. Случайная доля ``freeze_ratio ∈ [0.2, 0.5]`` — фаза "заморозки":
+       физика работает с предыдущим ``old_F``.
+    3. Получить телеметрию и пересчитать управление через
+       ``controller.compute_control()``.
+    4. Оставшаяся часть такта: физика работает с новым ``F_raw``.
+    5. Вернуть ``J(target_state, measured)`` и ``F_raw``.
 
     Parameters
     ----------
-    controller:
-        Блок вычисления управления.
-    plant:
+    controller : Controller
+        Блок вычисления управления (должен реализовывать ``get_action``).
+    plant : ObjectOfControl
         Объект управления (физическая модель).
-    sensor:
-        Блок получения телеметрии.
-    noise:
-        Мгновенное внешнее возмущение.
-    old_F:
-        Сила, которую применяют к объекту управления до момента пересчёта
-        управляющего сигнала.
-    target_state:
-        Целевое (измеряемое) состояние.
-    J:
-        Функция стоимости/оценки качества: ``J(measured, target_state)``.
+    sensor : SensorBlock
+        Блок получения телеметрии (квантование + шум).
+    noise : NoiseForce
+        Мгновенное значение силы внешнего возмущения.
+    old_F : float
+        Сила (Н), применявшаяся на предыдущем такте.
+    target_state : np.ndarray
+        Целевой вектор состояния ``(x, θ₁, θ₂, ẋ, θ̇₁, θ̇₂)``.
+    J : Callable[[np.ndarray, np.ndarray], float]
+        Функция стоимости/награды: ``J(target_state, measured) -> float``.
+        Вызывается **после** полного такта управления.
 
     Returns
     -------
-    float
-        Значение ``J`` на последней телеметрии в пределах одного control-tick.
+    tuple[float, float]
+        ``(J_value, F_raw)``:
+        - ``J_value`` — значение целевой функции на последней телеметрии
+        - ``F_raw`` — новая управляющая сила (Н)
+
+    Notes
+    -----
+    **Зачем нужна задержка?** В реальном контроллере есть вычислительная
+    задержка между съёмом показаний и выдачей управления. ``freeze_ratio``
+    имитирует эту задержку со случайной вариацией (±15% от номинала).
+
+    Optimization potential:
+        - ``freeze_ratio`` генерируется через ``np.random.random()`` на
+          каждом такте; если задержка не критична, можно использовать
+          фиксированное значение (например, 0.33) для воспроизводимости.
+        - Два вызова ``plant.update_physics`` (до и после пересчёта
+          управления) можно объединить в один с сохранением состояния
+          в момент замера.
+        - Вызов ``plant.q`` и ``plant.dq`` внутри ``sensor.get_telemetry``
+          создаёт копии массивов (см. ``ObjectOfControl``).
     """
 
-    dt_control = controller._dt
-    dt_physics = plant._dt
+    dt_control: float = controller._dt
+    dt_physics: float = plant._dt
 
-    # Общее число шагов физики в одном тикe управления.
-    steps_per_control = int(dt_control / dt_physics)
+    # Общее число шагов физики в одном тике управления.
+    steps_per_control: int = int(dt_control / dt_physics)
     # Доля времени, в течение которой управление не пересчитывается (задержка).
-    freeze_ratio = 0.3*np.random.random() + 0.2
-    count_time = int(steps_per_control * freeze_ratio)
-    remaining_steps = steps_per_control - count_time
+    freeze_ratio: float = 0.3 * np.random.random() + 0.2
+    count_time: int = int(steps_per_control * freeze_ratio)
+    remaining_steps: int = steps_per_control - count_time
 
-    F_raw = float(old_F)
-    measured = sensor.get_telemetry(plant.q, plant.dq)
+    F_raw: float = float(old_F)
+    measured: np.ndarray = sensor.get_telemetry(plant.q, plant.dq)
 
     # Фаза задержки: физика работает, используя предыдущее воздействие.
     for _ in range(count_time):
