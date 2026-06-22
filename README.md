@@ -61,10 +61,12 @@ poetry install
 
 ### C++ backend
 
-Сборка C++ ядра (`co_cpp.so`) через pybind11.
+Сборка C++ ядра симуляции через pybind11.
 
-**Требования:** cmake ≥ 3.20, C++17 (gcc ≥ 9 / clang ≥ 10), pybind11 — уже
-включён в корневой `pyproject.toml`.
+**Требования:** cmake ≥ 3.20, C++17 компилятор, pybind11 — уже включён
+в корневой `pyproject.toml`.
+
+#### Linux
 
 ```bash
 # 1. Подготовить build-директорию
@@ -96,6 +98,46 @@ print('Functions:', [f for f in dir(m) if not f.startswith('_')])
 ```bash
 cd packages/simulation/CO/cpp/build
 cmake --build . -j "$(nproc)"
+```
+
+#### Windows
+
+**Требования:** Visual Studio Build Tools 2022 (или Visual Studio 2022
+с компонентом "Desktop development with C++"), cmake (установленный
+через `winget install cmake` или `choco install cmake`).
+
+Сборка в **PowerShell** (от имени разработчика — "Developer PowerShell for VS 2022"):
+
+```powershell
+# 1. Подготовить build-директорию
+cd packages/simulation/CO/cpp
+Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Path build | Out-Null
+cd build
+
+# 2. Получить путь к Python из poetry
+$py = & poetry run python -c "import sys; print(sys.executable)"
+
+# 3. Запустить cmake
+cmake .. `
+  -DPython_EXECUTABLE="$py" `
+  -DCMAKE_BUILD_TYPE=Release
+
+# 4. Собрать
+cmake --build . --config Release
+```
+
+После сборки модуль появится в `packages\simulation\CO\co_cpp.pyd`.
+
+**Проверка:**
+```powershell
+poetry run python -c "from packages.simulation.CO import co_cpp as m; print('C++ backend OK:', m); print('Functions:', [f for f in dir(m) if not f.startswith('_')])"
+```
+
+**Быстрая пересборка:**
+```powershell
+cd packages/simulation/CO/cpp/build
+cmake --build . --config Release
 ```
 
 ---
