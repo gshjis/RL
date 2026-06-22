@@ -59,14 +59,43 @@ RL/
 poetry install
 ```
 
-### C++ backend (опционально)
+### C++ backend
+
+Сборка C++ ядра (`co_cpp.so`) через pybind11.
+
+**Требования:** cmake ≥ 3.20, C++17 (gcc ≥ 9 / clang ≥ 10), pybind11 — уже
+включён в корневой `pyproject.toml`.
 
 ```bash
+# 1. Подготовить build-директорию
 cd packages/simulation/CO/cpp
+rm -rf build
 mkdir build && cd build
-cmake ..
-make
-cp co_cpp*.so ..
+
+# 2. Запустить cmake с Python из poetry
+cmake .. \
+  -DPython_EXECUTABLE="$(poetry run python -c 'import sys; print(sys.executable)')" \
+  -DCMAKE_BUILD_TYPE=Release
+
+# 3. Собрать
+cmake --build . -j "$(nproc)"
+```
+
+После сборки модуль появится в `packages/simulation/CO/co_cpp.so`.
+
+**Проверка:**
+```bash
+poetry run python -c "
+from packages.simulation.CO import co_cpp as m
+print('C++ backend OK:', m)
+print('Functions:', [f for f in dir(m) if not f.startswith('_')])
+"
+```
+
+**Быстрая пересборка** (без очистки `build`):
+```bash
+cd packages/simulation/CO/cpp/build
+cmake --build . -j "$(nproc)"
 ```
 
 ---
