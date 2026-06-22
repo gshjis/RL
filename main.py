@@ -20,24 +20,23 @@ from packages.simulation.CO import (
 from packages.simulation.GUI import PendulumViewer
 
 PLANT_CONFIG = PlantConfig(
-    M=0.8,          # масса тележки, кг
-    m1=0.25,        # масса маятника, кг
+    M=1.0,                # масса тележки, кг (реалистично для стенда с ремнём)
+    m1=0.23,              # масса маятника, кг (стандарт: 0.2–0.25 кг)
     m2=0.0,
-    l1=1.1,         # длина маятника, м
+    l1=0.4,               # длина маятника, м (0.3–0.45 м — стандарт)
     l2=0.0,
-    L1=0.7,         # расстояние до ЦМ маятника, м
-    L2=0.0,
-    J1=0.015,       # момент инерции маятника, кг·м²
-    J2=0.00,
-    g=-9.81,        # ускорение свободного падения, м/с²
-    b_c=0.05,        # вязкое трение тележки
-    b_1=0.01,        # вязкое трение в шарнире
-    b_2=0.00,
+    L1=0.2,               # ЦМ на середине стержня
+    J1=0.0031,            # момент инерции (1/12 * m * l^2 = 1/12*0.23*0.4^2)
+    J2=0.0,
+    g=-9.81,
+    b_c=0.1,              # трение тележки, Н·с/м
+    b_1=0.005,             # трение в шарнире, Н·м·с/рад
+    b_2=0.0,
     single_pendulum_mode=True,
     backslash_mode=False,
-    init_q=np.array([0.0, 0.0, 0.0]),  # маятник в верхнем положении
+    init_q=np.array([0.0, np.pi+np.radians(2), 0.0]),
     init_dq=np.array([0.0, 0.0, 0.0]),
-    dt=0.0001,
+    dt=0.001,
 )
 
 SENSOR_CONFIG = SensorConfig(
@@ -50,7 +49,7 @@ SENSOR_CONFIG = SensorConfig(
 
 CONTROLLER_CONFIG = ControllerConfig(
     dt=0.01,
-    max_force=40.0,
+    max_force=24,
     has_velocity_sensors=True,
     filter_cutoff_hz=50.0,
 )
@@ -58,28 +57,28 @@ CONTROLLER_CONFIG = ControllerConfig(
 
 if __name__ == "__main__":
 
-    swing_controller = SwingUp(CONTROLLER_CONFIG,30,PLANT_CONFIG)
-    pid_controller = PIDController(CONTROLLER_CONFIG, gains=np.array([66.9, 0,9.8,-6,-7.2]))
+    swing_controller = SwingUp(CONTROLLER_CONFIG,50,PLANT_CONFIG)
+    pid_controller = PIDController(CONTROLLER_CONFIG, gains=np.array([80.42,0.0,30.71,-10,-5]))
     controller = SwingUpAndBalance(
         CONTROLLER_CONFIG,
         swingup_controller=swing_controller,
         balance_controller=pid_controller
     )
-    controller.set_motor_inertia(time_constant=0.01)
+    controller.set_motor_inertia(time_constant=0.1)
 
-    NOISE = NoiseForce(mean=0.005, std=0.1)
+    NOISE = NoiseForce(mean=0.00, std=0.01)
     TARGET = np.array([0.0, np.pi, 0.0, 0.0, 0.0, 0.0])
 
     optimizer = Genetic_PID_AngleOnly()
-    # pid_controller.train(
-    #     plant_config=PLANT_CONFIG,
-    #     sensor_config=SENSOR_CONFIG,
-    #     noise=NOISE,
-    #     optimizer=optimizer,
-    #     target_state=TARGET,
-    #     episode_max_time=30.0,
-    #     terminate_condition=terminate_condition
-    # )
+    pid_controller.train(
+        plant_config=PLANT_CONFIG,
+        sensor_config=SENSOR_CONFIG,
+        noise=NOISE,
+        optimizer=optimizer,
+        target_state=TARGET,
+        episode_max_time=30.0,
+        terminate_condition=terminate_condition
+    )
 
     w = PendulumViewer(
         plant=ObjectOfControl(PLANT_CONFIG),

@@ -51,10 +51,9 @@ PYBIND11_MODULE(co_cpp, m) {
                 }
             }
 
-            // Noise: deterministic sampling is handled in Python via random.gauss.
-            // Here we just treat noise as additive mean/std, and set F_total = F_real + mean.
-            // To match current Python behavior, we expect Python to pass a sampled value separately.
-            const double F_total = F_real + noise.mean;
+            // Sample noise from normal distribution N(noise.mean, noise.std²)
+            const double F_noise = sample_noise_force(noise);
+            const double F_total = F_real + F_noise;
 
             rk4_step(q, dq, F_total, dt, params, single_mode);
             return py::make_tuple(q, dq);
@@ -65,15 +64,14 @@ PYBIND11_MODULE(co_cpp, m) {
 
     // update_physics_cpp: performance-oriented wrapper that updates q/dq in-place
     // and returns updated backlash_gap_pos.
-    // Noise is treated as a constant on the step: F_total = F_real + noise_mean.
-    // (noise_std is provided for API parity but is not sampled here.)
+    // Noise is sampled from normal distribution N(noise_mean, noise_std²).
     m.def(
         "update_physics_cpp",
         [](py::array_t<double, py::array::c_style | py::array::forcecast> q_arr,
            py::array_t<double, py::array::c_style | py::array::forcecast> dq_arr,
            double F_ideal,
            double noise_mean,
-           double /*noise_std*/,
+           double noise_std,
            double dt,
            PlantParams params,
            bool backslash_mode,
@@ -120,7 +118,11 @@ PYBIND11_MODULE(co_cpp, m) {
                 }
             }
 
-            const double F_total = F_real + noise_mean;
+            // Sample noise from normal distribution N(noise_mean, noise_std²)
+            const double F_noise = (noise_std > 0.0)
+                ? sample_noise_force({noise_mean, noise_std})
+                : noise_mean;
+            const double F_total = F_real + F_noise;
             rk4_step(q, dq, F_total, dt, params, single_mode);
 
             // write back

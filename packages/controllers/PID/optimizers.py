@@ -62,111 +62,104 @@ class Zigler_Nikols:
         **kwargs,
     ) -> dict[str, float]:
         """
-        Запустить оптимизацию Kx/Kdx.
+        [DEPRECATED] Метод не оптимизирует, а строит графики sin(θ₁) для разных Kp.
 
-        Parameters
-        ----------
-        controller : PIDController
-            ПИД-регулятор, коэффициенты которого оптимизируются.
-        plant : ObjectOfControl
-            Физическая модель.
-        sensor : SensorBlock
-            Блок датчиков.
-        noise : NoiseForce
-            Внешнее возмущение.
-        target_state : np.ndarray
-            Целевое состояние.
-        terminate_condition : Callable
-            Условие досрочного завершения.
-        episode_max_time : float
-            Максимальная длительность эпизода (с).
-        logger : Logger | None
-            Опциональный логгер.
-        **kwargs
-            ``fixed_Kp``, ``fixed_Ki``, ``fixed_Kd`` — фиксированные
-            угловые коэффициенты.
-            ``Kx_range`` — диапазон ``[min, max]`` перебора Kx.
-            ``Kx_step`` — шаг перебора Kx.
+        ⚠️  Реальная оптимизация удалена. Только визуализация отклика.
+
+        Параметры **kwargs
+        -------------------
+        Kp_range : list[float], default [0.0, 200.0]
+            Диапазон перебора Kp [min, max].
+        Kp_step : float, default 10.0
+            Шаг перебора Kp.
+        output_dir : str, default "pid_sweep"
+            Папка для сохранения графиков (создаётся если нет).
+        fixed_Ki, fixed_Kd : float, default 0.0
+            Фиксированные коэффициенты дифференциальной и интегральной
+            составляющих по углу.
+        fixed_Kx, fixed_Kdx : float, default 0.0
+            Фиксированные коэффициенты по положению тележки.
 
         Returns
         -------
         dict[str, float]
-            Словарь с ключами ``Kx_crit``, ``T_crit``,
-            ``Kx_final``, ``Kdx_final``.
-
-        Raises
-        ------
-        RuntimeError
-            Если критический коэффициент не найден во всём диапазоне.
+            Словарь со статусом, путём к папке и числом сохранённых
+            графиков.
         """
-        logger = logger or self.logger
+        import os
+        import matplotlib.pyplot as plt
+        from tqdm import tqdm
 
-        fixed_Kp = float(kwargs.get("fixed_Kp", controller.gains[0]))
+        # ── Извлечение параметров из kwargs ─────────────────────────────
+        Kp_range = kwargs.get("Kp_range", [19.7, 20])
+        Kp_step = float(kwargs.get("Kp_step", 0.001))
+        output_dir = str(kwargs.get("output_dir", "pid_sweep"))
+
         fixed_Ki = float(kwargs.get("fixed_Ki", 0.0))
-        fixed_Kd = float(kwargs.get("fixed_Kd", controller.gains[2]))
+        fixed_Kd = float(kwargs.get("fixed_Kd", 0.0))
+        fixed_Kx = float(kwargs.get("fixed_Kx", 0.0))
+        fixed_Kdx = float(kwargs.get("fixed_Kdx", 0.0))
 
-        Kx_range = kwargs.get("Kx_range", [-40.0, -1.0])
-        Kx_step = kwargs.get("Kx_step", -0.5)
-        Kx_min, Kx_max = float(Kx_range[0]), float(Kx_range[1])
+        # ── Создание выходной папки ────────────────────────────────────
+        os.makedirs(output_dir, exist_ok=True)
 
+        Kp_min, Kp_max = float(Kp_range[0]), float(Kp_range[1])
+        Kp_values = np.arange(Kp_min, Kp_max + Kp_step / 2.0, Kp_step)
         max_steps = int(episode_max_time / controller._dt)
 
-        controller.gains = np.array([fixed_Kp, fixed_Ki, fixed_Kd, 0.0, 0.0], dtype=float)
-
-        Kx_crit = None
-        T_crit = None
-        Kx = 0.0
-
-        if logger:
-            print("[Zigler-Nikols] Поиск Kx_crit...")
-
-        while Kx >= Kx_min and Kx_crit is None:
-            controller.gains[3] = Kx
-            controller.gains[4] = 0.0
+        # ── Цикл по Kp ──────────────────────────────────────────────────
+        for Kp in tqdm(Kp_values, desc="Сканирование Kp"):
+            controller.gains = np.array(
+                [19.04, fixed_Ki, fixed_Kd, fixed_Kx, fixed_Kdx], dtype=float
+            )
 
             plant.reset()
             controller.reset()
-            plant.q[0] = 3.0
+
+            sin_theta = np.empty(max_steps, dtype=float)
             F = 0.0
 
-            trajectory = np.zeros(max_steps)
-            steps_done = 0
-
             for step in range(max_steps):
-                _, F = clock_cycle(controller, plant, sensor, noise, F, target_state, cf.J)
-                # if terminate_condition(plant):
-                #     break
-                trajectory[step] = plant.q[0]
-                steps_done = step + 1
+                _, F = clock_cycle(
+                    controller, plant, sensor, noise, F, target_state, cf.J
+                )
+                sin_theta[step] = np.sin(plant.q[1])
 
-            if logger:
-                logger.draw_dynamic_plot(trajectory[:steps_done], plant._dt)
+                if terminate_condition is not None and terminate_condition(plant):
+                    sin_theta[step:] = np.sin(plant.q[1])
+                    break
 
-            is_osc, period = self._detect_oscillations(trajectory[:steps_done], plant._dt)
+            # ── Построение графика ──────────────────────────────────────
+            fig, ax = plt.subplots(figsize=(10, 5))
+            time_axis = np.arange(max_steps) * controller._dt
+            ax.plot(time_axis, sin_theta, color="blue", linewidth=0.8)
+            ax.axhline(y=0.0, color="gray", linestyle="--", linewidth=0.5)
+            ax.axhline(
+                y=np.sin(np.pi),
+                color="red", linestyle=":", linewidth=0.5,
+                label=f"sin(π)={np.sin(np.pi):.2f}",
+            )
+            ax.set_xlabel("Время (с)")
+            ax.set_ylabel("sin(θ₁)")
+            ax.set_title(
+                f"Kp={Kp:.1f}  Ki={fixed_Ki:.1f}  Kd={fixed_Kd:.1f}  "
+                f"Kx={fixed_Kx:.1f}  Kdx={fixed_Kdx:.1f}"
+            )
+            ax.grid(True, alpha=0.3)
+            ax.legend()
+            fig.tight_layout()
 
-            if is_osc:
-                Kx_crit = Kx
-                T_crit = period
-                print(f"    ✅ Kx_crit = {Kx_crit:.2f}, T_crit = {T_crit:.3f} с")
-            else:
-                print(f"    Kx = {Kx:.2f}: нет колебаний")
-                Kx += Kx_step
-
-        if Kx_crit is None:
-            raise RuntimeError("Kx_crit не найден")
-
-        Kx_final = 0.6 * Kx_crit
-        Kdx_final = 0.125 * Kx_crit * T_crit
-
-        controller.gains = np.array([fixed_Kp, fixed_Ki, fixed_Kd, Kx_final, Kdx_final], dtype=float)
-
-        print(f"[Zigler-Nikols] ✅ Kx = {Kx_final:.4f}, Kdx = {Kdx_final:.4f}")
+            safe_name = f"Kp_{Kp:.2f}".replace(".", "_")
+            fig.savefig(
+                os.path.join(output_dir, f"{safe_name}.png"),
+                dpi=100, bbox_inches="tight",
+            )
+            plt.close(fig)
 
         return {
-            "Kx_crit": float(Kx_crit),
-            "T_crit": float(T_crit),
-            "Kx_final": float(Kx_final),
-            "Kdx_final": float(Kdx_final),
+            "status": "graphs_generated",
+            "output_dir": output_dir,
+            "n_graphs": len(Kp_values),
         }
 
     def _detect_oscillations(self, trajectory: np.ndarray, dt: float) -> tuple[bool, float]:
@@ -338,15 +331,15 @@ class Genetic_PID_AngleOnly:
         fixed_Kx = float(kwargs.get("fixed_Kx", 0.0))
         fixed_Kdx = float(kwargs.get("fixed_Kdx", 0.0))
 
-        Kp_range = kwargs.get("Kp_range", [0.0, 70.0])
-        Ki_range = kwargs.get("Ki_range", [0.0, 50.0])
-        Kd_range = kwargs.get("Kd_range", [0.0, 10.0])
+        Kp_range = kwargs.get("Kp_range", [0.0, 300.0])
+        Ki_range = kwargs.get("Ki_range", [0.0, 0.0])
+        Kd_range = kwargs.get("Kd_range", [0.0, 200.0])
         Kp_min, Kp_max = float(Kp_range[0]), float(Kp_range[1])
         Ki_min, Ki_max = float(Ki_range[0]), float(Ki_range[1])
         Kd_min, Kd_max = float(Kd_range[0]), float(Kd_range[1])
 
         ga = _GA2Config(
-            population_size=int(kwargs.get("population_size", 50)),
+            population_size=int(kwargs.get("population_size", 200)),
             generations=int(kwargs.get("generations", 30)),
             elite_frac=float(kwargs.get("elite_frac", 0.2)),
             tournament_k=int(kwargs.get("tournament_k", 3)),

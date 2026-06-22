@@ -45,7 +45,7 @@ def terminate_condition(state: ObjectOfControl) -> bool:
         return False
     """
     if abs(state.q[1] - np.pi) > np.radians(40):
-        return False
+        return True
     return False
 
 

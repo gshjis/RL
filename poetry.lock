@@ -3667,6 +3667,26 @@ url = "https://download.pytorch.org/whl/cpu"
 reference = "pytorch-cpu"
 
 [[package]]
+name = "tqdm"
+version = "4.68.3"
+description = "Fast, Extensible Progress Meter"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "tqdm-4.68.3-py3-none-any.whl", hash = "sha256:39832cc2def2789a6f29df83f172db7416cea70052c0907a57801c5f2fdccb03"},
+    {file = "tqdm-4.68.3.tar.gz", hash = "sha256:00dfa48452b6b6cfae3dd9885636c23d3422d1ec97c66d96818cbd5e0821d482"},
+]
+
+[package.dependencies]
+colorama = {version = "*", markers = "platform_system == \"Windows\""}
+
+[package.extras]
+discord = ["envwrap", "requests"]
+notebook = ["ipywidgets (>=6)"]
+slack = ["envwrap", "slack-sdk"]
+telegram = ["envwrap", "requests"]
+
+[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 description = "Backported and Experimental Type Hints for Python 3.9+"
@@ -3920,4 +3940,4 @@ type = ["pytest-mypy (>=1.0.1)"]
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.12"
-content-hash = "357b608a46561ca27d66bf355e90a4698544fdb93f3a706bd84d2630e99e2bc5"
+content-hash = "99bb889cac36de75522f3bc26fb9e8c4f272fc169053196b07d0ab7f7ad0f1e4"

@@ -18,8 +18,8 @@ from packages.simulation.CO import (
     ObjectOfControl,
     SensorBlock,
     SensorConfig,
+    clock_cycle,
 )
-from packages.simulation.CO.run import clock_cycle
 from .constants import *
 from .dialogs import ask_recording, ask_save_video
 from .recorder import compile_video

@@ -358,7 +358,7 @@ class Controller(ABC):
 
         # ── 3. Закон управления (абстрактный) ──────────────────────────
         F_raw = self.get_action(s_clean, target_state)
-        # ── 4. Насыщение (clipping) ────────────────────────────────────
+            # ── 4. Насыщение (clipping) ────────────────────────────────────
         max_f = self._max_force
         if F_raw > max_f:
             F_clipped = max_f

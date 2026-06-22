@@ -187,8 +187,36 @@ class Reinforce(Controller):
                         self, plant, sensor, noise, F_raw, target_state,
                         lambda t, m: np.exp(-np.linalg.norm(t-m) * 3.0)
                     )
-                    
-                    rewards.append(J_)
+                    E = 0.5*plant._m1*plant._L1*(plant._dq[1])**2 \
+                        - plant._m1*plant._g*plant._L1*(1-np.cos(plant._dq[1]))
+                    # ========== ЭНЕРГЕТИЧЕСКАЯ ФУНКЦИЯ СТОИМОСТИ ==========
+                    # Кинетическая энергия вращения маятника
+                    # Используем готовый момент инерции _J1
+                    E_kinetic = 0.5 * plant._J1 * (plant._dq[1])**2
+
+                    # Потенциальная энергия (относительно нижней точки)
+                    # plant._q[1] - угол маятника
+                    E_potential = plant._m1 * plant._g * plant._L1 * (1 - np.cos(plant._q[1]))
+
+                    # Полная энергия
+                    E = E_kinetic + E_potential
+
+                    # Целевая энергия (маятник стоит вертикально вверх)
+                    E_target = 2 * plant._m1 * plant._g * plant._L1
+
+                    # Штраф за скорость (когда маятник наверху)
+                    k = 0.3
+                    speed_penalty = k * (plant._dq[1])**2 * (1 if E > E_target else 0)
+
+                    # Итоговая стоимость (то, что минимизируем)
+                    cost = (E - E_target)**2 + speed_penalty
+
+                    # Награда (то, что максимизируем)
+                    reward = -cost / 100.0
+
+                    # Небольшой штраф за каждый шаг
+
+                    rewards.append(reward)
 
                     if default_terminate_condition(plant):
                         rewards[-1] = -10.0
