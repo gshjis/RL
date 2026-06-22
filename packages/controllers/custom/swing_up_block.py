@@ -19,7 +19,11 @@ class SwingUp(Controller):
         E = 0.5*self._plant_config.m1*self._plant_config.L1*(s_clean[4])**2 \
              - self._plant_config.m1*self._plant_config.g*self._plant_config.L1*(1-np.cos(s_clean[1]))
         E_t = -2*self._plant_config.m1*self._plant_config.g*self._plant_config.L1
-        F = self._K*(E-E_t)*np.sign(s_clean[4]*np.cos(s_clean[1]))
+        F = self._K*np.tanh(E-E_t)*np.sign(s_clean[4]*np.cos(s_clean[1]))
+        if abs(s_clean[0]) < 0.6:
+            return 40
+        else:
+            return -40
         return F
 class SwingUpAndBalance(Controller):
     def __init__(self,config:ControllerConfig, swingup_controller:SwingUp, balance_controller:PIDController):

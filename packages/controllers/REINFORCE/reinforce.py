@@ -77,6 +77,8 @@ class ReinforceNet(nn.Module):
             mu = torch.sigmoid(mu)
         
         log_std = self.log_std_layer(x)
+        # Ограничение std, чтобы не уходило в 0 или бесконечность
+        log_std = torch.clamp(log_std, min=-5.0, max=2.0)
         return mu, log_std
 
 
@@ -109,13 +111,19 @@ class Reinforce(Controller):
         
         mu, log_std = self.forward(x)
         std = torch.exp(log_std)
-        dist = torch.distributions.Normal(mu, std)
         
+        # Защита от NaN
+        if torch.isnan(mu).any() or torch.isnan(std).any():
+            print("[REINFORCE] NaN detected in get_action! Returning 0.")
+            return 0.0
+        
+        dist = torch.distributions.Normal(mu, std)
         action = dist.sample()
         log_prob = dist.log_prob(action).sum(dim=-1)
         self._log_probs.append(log_prob)
         
-        return mu*self._max_force
+        # Возвращаем именно сэмплированное действие, а не mu!
+        return float(action.item() * self._max_force)
 
     def save(self, path: str | Path) -> None:
         """Сохранить веса нейросети в файл."""
@@ -187,15 +195,13 @@ class Reinforce(Controller):
                         self, plant, sensor, noise, F_raw, target_state,
                         lambda t, m: np.exp(-np.linalg.norm(t-m) * 3.0)
                     )
-                    E = 0.5*plant._m1*plant._L1*(plant._dq[1])**2 \
-                        - plant._m1*plant._g*plant._L1*(1-np.cos(plant._dq[1]))
-                    # ========== ЭНЕРГЕТИЧЕСКАЯ ФУНКЦИЯ СТОИМОСТИ ==========
+
+                    # Энергетическая функция стоимости
                     # Кинетическая энергия вращения маятника
-                    # Используем готовый момент инерции _J1
                     E_kinetic = 0.5 * plant._J1 * (plant._dq[1])**2
 
                     # Потенциальная энергия (относительно нижней точки)
-                    # plant._q[1] - угол маятника
+                    # plant._q[1] — угол маятника (НЕ _dq[1]!)
                     E_potential = plant._m1 * plant._g * plant._L1 * (1 - np.cos(plant._q[1]))
 
                     # Полная энергия
@@ -205,7 +211,7 @@ class Reinforce(Controller):
                     E_target = 2 * plant._m1 * plant._g * plant._L1
 
                     # Штраф за скорость (когда маятник наверху)
-                    k = 0.3
+                    k = 5
                     speed_penalty = k * (plant._dq[1])**2 * (1 if E > E_target else 0)
 
                     # Итоговая стоимость (то, что минимизируем)
@@ -213,8 +219,6 @@ class Reinforce(Controller):
 
                     # Награда (то, что максимизируем)
                     reward = -cost / 100.0
-
-                    # Небольшой штраф за каждый шаг
 
                     rewards.append(reward)
 

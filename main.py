@@ -34,9 +34,9 @@ PLANT_CONFIG = PlantConfig(
     b_2=0.0,
     single_pendulum_mode=True,
     backslash_mode=False,
-    init_q=np.array([0.0, np.pi+np.radians(2), 0.0]),
+    init_q=np.array([0.0, 0.0, 0.0]),
     init_dq=np.array([0.0, 0.0, 0.0]),
-    dt=0.001,
+    dt=0.0001,
 )
 
 SENSOR_CONFIG = SensorConfig(
@@ -48,7 +48,7 @@ SENSOR_CONFIG = SensorConfig(
 )
 
 CONTROLLER_CONFIG = ControllerConfig(
-    dt=0.01,
+    dt=0.001,
     max_force=24,
     has_velocity_sensors=True,
     filter_cutoff_hz=50.0,
@@ -57,8 +57,8 @@ CONTROLLER_CONFIG = ControllerConfig(
 
 if __name__ == "__main__":
 
-    swing_controller = SwingUp(CONTROLLER_CONFIG,50,PLANT_CONFIG)
-    pid_controller = PIDController(CONTROLLER_CONFIG, gains=np.array([80.42,0.0,30.71,-10,-5]))
+    swing_controller = SwingUp(CONTROLLER_CONFIG,150,PLANT_CONFIG)
+    pid_controller = PIDController(CONTROLLER_CONFIG, gains=np.array([80.42,0.0,30.71,-10,-15]))
     controller = SwingUpAndBalance(
         CONTROLLER_CONFIG,
         swingup_controller=swing_controller,
@@ -66,19 +66,19 @@ if __name__ == "__main__":
     )
     controller.set_motor_inertia(time_constant=0.1)
 
-    NOISE = NoiseForce(mean=0.00, std=0.01)
+    NOISE = NoiseForce(mean=0.00, std=0.03)
     TARGET = np.array([0.0, np.pi, 0.0, 0.0, 0.0, 0.0])
 
     optimizer = Genetic_PID_AngleOnly()
-    pid_controller.train(
-        plant_config=PLANT_CONFIG,
-        sensor_config=SENSOR_CONFIG,
-        noise=NOISE,
-        optimizer=optimizer,
-        target_state=TARGET,
-        episode_max_time=30.0,
-        terminate_condition=terminate_condition
-    )
+    # pid_controller.train(
+    #     plant_config=PLANT_CONFIG,
+    #     sensor_config=SENSOR_CONFIG,
+    #     noise=NOISE,
+    #     optimizer=optimizer,
+    #     target_state=TARGET,
+    #     episode_max_time=30.0,
+    #     terminate_condition=terminate_condition
+    # )
 
     w = PendulumViewer(
         plant=ObjectOfControl(PLANT_CONFIG),
