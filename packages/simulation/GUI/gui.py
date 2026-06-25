@@ -300,7 +300,6 @@ class PendulumViewer:
                     pass
 
         # Сохранение CSV-логов
-        self._save_csv()
 
         pygame.quit()
         sys.exit(0)
@@ -408,35 +407,6 @@ class PendulumViewer:
         """Сохранить историю симуляции в CSV-файлы."""
         if not self._csv_time:
             return
-
-        # sin_data.csv
-        sin_path = os.path.join(os.path.abspath("."), "sin_data.csv")
-        try:
-            with open(sin_path, "w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["time (с)", "sin(theta1)", "sin(theta2)"])
-                for i in range(len(self._csv_time)):
-                    t = self._csv_time[i]
-                    s1 = self._csv_sin1[i]
-                    s2 = self._csv_sin2[i] if i < len(self._csv_sin2) else 0.0
-                    w.writerow([f"{t:.6f}", f"{s1:.6f}", f"{s2:.6f}"])
-            print(f"✓ sin_data.csv сохранён ({len(self._csv_time)} строк)")
-        except Exception as e:
-            print(f"✗ Ошибка сохранения sin_data.csv: {e}")
-
-        # error_data.csv
-        err_path = os.path.join(os.path.abspath("."), "error_data.csv")
-        try:
-            with open(err_path, "w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["time (с)", "error_x (м)"])
-                for i in range(len(self._csv_time)):
-                    t = self._csv_time[i]
-                    e = self._csv_err_x[i] if i < len(self._csv_err_x) else 0.0
-                    w.writerow([f"{t:.6f}", f"{e:.6f}"])
-            print(f"✓ error_data.csv сохранён ({len(self._csv_time)} строк)")
-        except Exception as e:
-            print(f"✗ Ошибка сохранения error_data.csv: {e}")
 
     def _reset(self) -> None:
         """Сброс состояния симуляции."""
